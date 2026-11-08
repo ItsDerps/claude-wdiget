@@ -1,0 +1,31 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'uk.dnm.claudewidget'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'uk.dnm.claudewidget'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+    }
+
+    // Fixed key so each new build installs over the old one
+    signingConfigs {
+        fixed {
+            storeFile file('widget.keystore')
+            storePassword 'claudewidget'
+            keyAlias 'widget'
+            keyPassword 'claudewidget'
+        }
+    }
+    buildTypes {
+        debug { signingConfig signingConfigs.fixed }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

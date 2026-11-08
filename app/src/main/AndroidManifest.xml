@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <queries>
+        <package android:name="com.anthropic.claude" />
+        <intent><action android:name="android.media.action.IMAGE_CAPTURE" /></intent>
+        <intent><action android:name="android.intent.action.ASSIST" /></intent>
+        <intent><action android:name="android.intent.action.VOICE_COMMAND" /></intent>
+    </queries>
+
+    <application
+        android:label="Claude Widget"
+        android:icon="@drawable/ic_app"
+        android:allowBackup="false">
+
+        <activity
+            android:name=".SetupActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".ActionActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="false"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <receiver
+            android:name=".ClaudeWidgetProvider"
+            android:exported="true"
+            android:label="Claude">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info" />
+        </receiver>
+
+        <provider
+            android:name=".PhotoProvider"
+            android:authorities="uk.dnm.claudewidget.photo"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+    </application>
+</manifest>
