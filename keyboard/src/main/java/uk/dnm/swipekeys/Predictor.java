@@ -39,6 +39,7 @@ final class Predictor {
     int[] freq = new int[0];          // Zipf frequency x100 (~250..770)
     private Integer[] byKeyOrder = new Integer[0];
     HashMap<String, Integer> exact = new HashMap<>();
+    private HashMap<String, String> byLower = new HashMap<>(); // "london" -> "London", "i'm" -> "I'm"
 
     // Learned from the user
     HashMap<String, Integer> userWords = new HashMap<>();
@@ -71,10 +72,12 @@ final class Predictor {
         String[] ks = new String[n];
         int[] fs = new int[n];
         HashMap<String, Integer> ex = new HashMap<>(n * 2);
+        HashMap<String, String> bl = new HashMap<>(n * 2);
         for (int i = 0; i < n; i++) {
             ks[i] = key(ws[i]);
             fs[i] = f.get(i);
             ex.putIfAbsent(ks[i], i); // list is sorted by frequency, so the first is the most common
+            bl.putIfAbsent(ws[i].toLowerCase(), ws[i]);
         }
         Integer[] order = new Integer[n];
         for (int i = 0; i < n; i++) order[i] = i;
@@ -101,7 +104,7 @@ final class Predictor {
         }
 
         main.post(() -> {
-            words = ws; keys = ks; freq = fs; exact = ex; byKeyOrder = order;
+            words = ws; keys = ks; freq = fs; exact = ex; byKeyOrder = order; byLower = bl;
             // Keep anything learned while we were loading
             for (Map.Entry<String, Integer> e : userWords.entrySet()) uw.merge(e.getKey(), e.getValue(), Integer::sum);
             for (Map.Entry<String, HashMap<String, Integer>> e : next.entrySet()) {
@@ -160,6 +163,110 @@ final class Predictor {
             }
         }
         dirty = true;
+    }
+
+    /** The user insisted on this word (kept it instead of the correction): never correct it again. */
+    void markKnown(String prev, String word) {
+        learn(prev, word);
+        learn(null, word);
+    }
+
+    /** Forget everything learned from the user, on disk too. */
+    void clearLearned() {
+        userWords = new HashMap<>();
+        next = new HashMap<>();
+        dirty = false;
+        File dir = context.getFilesDir();
+        new Thread(() -> {
+            //noinspection ResultOfMethodCallIgnored
+            new File(dir, USER_FILE).delete();
+        }, "predictor-clear").start();
+    }
+
+    // ------------------------------------------------------------------ autocorrect
+
+    /**
+     * What a just-finished word should become, or null to leave it alone.
+     * Only corrects words that aren't real words (or ones the user has taught it), and only
+     * when one fix is clearly the most likely.
+     */
+    String autocorrect(String prev, String typed) {
+        if (typed.isEmpty() || words.length == 0 || typed.length() > 24) return null;
+        String norm = typed.replace('’', '\'');
+        String lower = norm.toLowerCase();
+        if (typed.length() > 1 && typed.equals(typed.toUpperCase())) return null; // ABBREVIATIONS
+        if (known(norm)) {
+            // Real word: only fix "i" -> "I" (and "i'm" -> "I'm" etc.)
+            if (lower.equals("i") || lower.startsWith("i'")) {
+                String d = byLower.get(lower);
+                if (d != null && !d.equals(norm) && d.charAt(0) == 'I') return d;
+            }
+            return null;
+        }
+        String k = key(norm);
+        if (k.isEmpty()) return null;
+
+        // Same letters, missing apostrophe: "dont" -> "don't", "im" -> "I'm"
+        Integer same = exact.get(k);
+        if (same != null) return matchCase(words[same], typed);
+
+        if (k.length() < 3) return null; // too short to guess safely
+        HashMap<String, Integer> nextCounts = prev == null ? null : next.get(prev.toLowerCase());
+        String best = null, second = null;
+        double bestScore = -1e9, secondScore = -1e9;
+        for (Map.Entry<String, Integer> e : edits(k).entrySet()) {
+            Integer i = exact.get(e.getKey());
+            if (i == null) continue;
+            String w = words[i];
+            if (isAbbrev(w)) continue; // don't turn words into abbreviations
+            double score = freq[i] - e.getValue();
+            Integer u = userWords.get(w);
+            if (u != null) score += 70 * Math.log(1 + u);
+            if (nextCounts != null) {
+                Integer c = nextCounts.get(w);
+                if (c != null) score += 90 * Math.log(1 + c);
+            }
+            if (score > bestScore) {
+                second = best; secondScore = bestScore;
+                best = w; bestScore = score;
+            } else if (score > secondScore) {
+                second = w; secondScore = score;
+            }
+        }
+        // Two words run together: "alot" -> "a lot", "inthe" -> "in the"
+        for (int cut = 1; cut < k.length(); cut++) {
+            Integer a = exact.get(k.substring(0, cut)), b = exact.get(k.substring(cut));
+            if (a == null || b == null) continue;
+            if (cut == 1 && !words[a].equals("a") && !words[a].equals("I")) continue;
+            if (!words[a].equals("I") && (isAbbrev(words[a]) || isAbbrev(words[b]))) continue;
+            double score = Math.min(freq[a], freq[b]) - 100;
+            String w = words[a] + " " + words[b];
+            if (score > bestScore) {
+                second = best; secondScore = bestScore;
+                best = w; bestScore = score;
+            } else if (score > secondScore) {
+                second = w; secondScore = score;
+            }
+        }
+        if (best == null || bestScore < MIN_FIX_SCORE) return null;
+        if (second != null && bestScore - secondScore < MIN_FIX_MARGIN) return null; // too close to call
+        return matchCase(best, typed);
+    }
+
+    private static boolean isAbbrev(String w) {
+        return w.length() > 1 && w.equals(w.toUpperCase());
+    }
+
+    static int MIN_FIX_SCORE = 300;
+    static int MIN_FIX_MARGIN = 40;
+
+    /** A dictionary word, or one the user has typed at least twice. */
+    boolean known(String word) {
+        String lower = word.replace('’', '\'').toLowerCase();
+        if (byLower.containsKey(lower)) return true;
+        Integer u = userWords.get(word);
+        if (u == null) u = userWords.get(lower);
+        return u != null && u >= 2;
     }
 
     /** "Hello" at the start of a sentence is stored as "hello"; "iPhone" or "London" keep their case. */

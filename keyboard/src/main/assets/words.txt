@@ -186,6 +186,7 @@ each	569
 Mr	569
 without	569
 against	568
+didn't	568
 end	568
 found	568
 must	568
@@ -259,6 +260,7 @@ there's	554
 told	554
 yet	554
 bad	553
+doesn't	553
 four	553
 hard	553
 mean	553
@@ -359,6 +361,7 @@ given	541
 guys	541
 half	541
 hand	541
+isn't	541
 level	541
 mind	541
 often	541
@@ -512,6 +515,7 @@ ready	528
 sometimes	528
 son	528
 street	528
+wasn't	528
 bring	527
 college	527
 current	527
@@ -655,6 +659,7 @@ sorry	518
 takes	518
 training	518
 wish	518
+wouldn't	518
 answer	517
 boy	517
 design	517
@@ -807,6 +812,7 @@ add	509
 article	509
 attack	509
 born	509
+couldn't	509
 damn	509
 decided	509
 decision	509
@@ -900,6 +906,7 @@ towards	505
 waiting	505
 ways	505
 access	505
+aren't	505
 base	505
 below	505
 created	505
@@ -1568,6 +1575,7 @@ rose	482
 seat	482
 seemed	482
 sexual	482
+shouldn't	482
 target	482
 understanding	482
 village	482
@@ -1944,6 +1952,7 @@ fantastic	471
 feelings	471
 flying	471
 governor	471
+hasn't	471
 hundred	471
 industrial	471
 joint	471
@@ -2080,6 +2089,7 @@ supported	468
 surprised	468
 taught	468
 transport	468
+weren't	468
 accepted	467
 adding	467
 affairs	467
@@ -3543,6 +3553,7 @@ enemies	440
 forgotten	440
 forth	440
 gods	440
+hadn't	440
 hire	440
 hop	440
 hopes	440
@@ -3734,6 +3745,7 @@ improving	437
 instructions	437
 introduce	437
 Kansas	437
+km	437
 lands	437
 legacy	437
 log	437
@@ -4412,6 +4424,7 @@ challenging	426
 chaos	426
 churches	426
 Cleveland	426
+cm	426
 composed	426
 concentration	426
 copper	426
@@ -5628,6 +5641,7 @@ alike	413
 applicable	413
 arrow	413
 availability	413
+aw	413
 bend	413
 boundary	413
 breach	413
@@ -6112,6 +6126,7 @@ hub	408
 Hughes	408
 inevitable	408
 investigating	408
+kg	408
 labels	408
 lacking	408
 laughs	408
@@ -8202,7 +8217,7 @@ costumes	389
 counseling	389
 crews	389
 cubs	389
-Cuz	389
+cuz	389
 dangers	389
 designing	389
 destructive	389
@@ -8324,6 +8339,7 @@ credited	388
 critically	388
 Dem	388
 distracted	388
+dm	388
 dolphins	388
 estates	388
 Ferguson	388
@@ -8332,6 +8348,7 @@ filters	388
 fools	388
 fourteen	388
 geometry	388
+gf	388
 ghosts	388
 gossip	388
 GP	388
@@ -9459,6 +9476,7 @@ axe	379
 backgrounds	379
 Baldwin	379
 belle	379
+bf	379
 bites	379
 bombers	379
 bonuses	379
@@ -10503,6 +10521,7 @@ Thames	373
 thigh	373
 thrive	373
 troll	373
+ty	373
 uncovered	373
 undertake	373
 unpaid	373
@@ -10812,6 +10831,7 @@ resembles	371
 respectable	371
 respectful	371
 richer	371
+rn	371
 Rodriguez	371
 Roma	371
 romeo	371
@@ -12873,6 +12893,7 @@ announcer	358
 awaited	358
 baba	358
 backdrop	358
+bae	358
 beau	358
 begged	358
 blackout	358
@@ -13086,6 +13107,7 @@ mats	357
 metropolis	357
 mummy	357
 nominate	357
+np	357
 offend	357
 oo	357
 orchard	357
@@ -13856,6 +13878,7 @@ examiner	352
 exercised	352
 expenditures	352
 expires	352
+fam	352
 fauna	352
 feds	352
 fidelity	352
@@ -13981,6 +14004,7 @@ brandy	351
 brethren	351
 brink	351
 brown's	351
+bruh	351
 carving	351
 cheeky	351
 chemist	351
@@ -14696,6 +14720,7 @@ interfaces	347
 intrigued	347
 intrinsic	347
 irresistible	347
+jk	347
 kb	347
 kittens	347
 landmarks	347
@@ -15369,6 +15394,7 @@ incompetence	343
 insomnia	343
 interception	343
 invaders	343
+irl	343
 juniors	343
 karaoke	343
 kW	343
@@ -17712,6 +17738,7 @@ masturbating	330
 meddling	330
 nods	330
 nothing's	330
+ofc	330
 omission	330
 orbits	330
 orchid	330
@@ -17729,6 +17756,7 @@ piggy	330
 piling	330
 polarized	330
 portals	330
+pov	330
 predetermined	330
 prelude	330
 prepaid	330
@@ -18511,6 +18539,7 @@ paternal	326
 pellets	326
 pelvis	326
 penetrated	326
+plz	326
 polarization	326
 potty	326
 powering	326
@@ -20823,6 +20852,7 @@ textured	315
 thrash	315
 thresholds	315
 thwarted	315
+thx	315
 tombstone	315
 torches	315
 torpedoes	315
@@ -23605,7 +23635,6 @@ widower	303
 wobbly	303
 wot	303
 wraith	303
-ya'll	303
 yanks	303
 yew	303
 zoological	303
@@ -24128,6 +24157,7 @@ bluffs	300
 booms	300
 bower	300
 bravest	300
+brb	300
 breasted	300
 budgeted	300
 bugger	300
@@ -25521,6 +25551,7 @@ unproven	295
 vac	295
 wanker	295
 watchmen	295
+yolo	295
 affixed	294
 airbags	294
 alkali	294
@@ -25893,6 +25924,7 @@ myocardial	293
 nachos	293
 naturalistic	293
 nepotism	293
+ngl	293
 normality	293
 oblong	293
 operatic	293
@@ -26223,6 +26255,7 @@ surfacing	292
 tableau	292
 taming	292
 taxa	292
+tbf	292
 techs	292
 tiredness	292
 toppled	292
@@ -27164,6 +27197,7 @@ neanderthals	288
 nears	288
 neuter	288
 newlyweds	288
+nvm	288
 och	288
 omitting	288
 opinionated	288
@@ -28127,6 +28161,7 @@ honking	284
 hookups	284
 hooters	284
 husk	284
+ikr	284
 implicate	284
 implore	284
 impounded	284
@@ -49963,38 +49998,3 @@ spasmodic	209
 speeders	209
 splay	209
 squiggle	209
-standoffish	209
-statutorily	209
-steeples	209
-steepness	209
-stomachache	209
-stratagems	209
-subalpine	209
-subclavian	209
-sublease	209
-sublimely	209
-sumpter	209
-supercharging	209
-surmounting	209
-suzerainty	209
-swabbed	209
-sympathised	209
-synthesise	209
-taints	209
-tempests	209
-thousandths	209
-tinier	209
-toft	209
-tonsillectomy	209
-transmigration	209
-trumping	209
-typological	209
-unalienable	209
-unasked	209
-unblinking	209
-uncivilised	209
-uncompensated	209
-unconquered	209
-undemanding	209
-undersides	209
-unissued	209

@@ -37,6 +37,8 @@ public class SwipeKeyboardService extends InputMethodService
     static final String PREFS = "swipekeys";
     static final String PREF_GLIDE = "glide";
     static final String PREF_ONE_HAND = "one_hand";
+    static final String PREF_AUTOCORRECT = "autocorrect";
+    static final String PREF_CLEAR_LEARNED = "clear_learned";
 
     private static final String SMART_PUNCT = ".,!?;:";
     private static final int PANEL_NONE = 0, PANEL_EMOJI = 1, PANEL_NOTES = 2;
@@ -60,6 +62,11 @@ public class SwipeKeyboardService extends InputMethodService
     private boolean learn;       // remember words typed in this field
     private boolean secret;      // password field
     private boolean autoSpace;   // the last thing we did was add a space after a suggestion
+    private boolean autocorrect; // fix typos when a word is finished
+
+    // The last autocorrection, so backspace can undo it
+    private String corrOriginal, corrFixed, corrSep, corrPrev;
+    private final java.util.HashSet<String> rejected = new java.util.HashSet<>(); // undone this session
 
     private ClipboardManager clipboard;
     private final List<String> clips = new ArrayList<>();
@@ -130,6 +137,14 @@ public class SwipeKeyboardService extends InputMethodService
                 || var == InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS;
         predict = cls == InputType.TYPE_CLASS_TEXT && !secret && !address;
         learn = predict && (info.imeOptions & EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING) == 0;
+        autocorrect = predict && prefs.getBoolean(PREF_AUTOCORRECT, true)
+                && (info.inputType & InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS) == 0;
+        if (prefs.getBoolean(PREF_CLEAR_LEARNED, false)) {
+            predictor.clearLearned();
+            rejected.clear();
+            prefs.edit().remove(PREF_CLEAR_LEARNED).apply();
+        }
+        clearCorrection();
         autoSpace = false;
         clearGlide();
         if (!restarting) showPanel(PANEL_NONE);
@@ -256,6 +271,7 @@ public class SwipeKeyboardService extends InputMethodService
         if (ic == null) return;
         autoSpace = false;
         clearGlide();
+        clearCorrection();
         ic.commitText(emoji, 1);
     }
 
@@ -270,6 +286,7 @@ public class SwipeKeyboardService extends InputMethodService
         if (ic == null) return;
         autoSpace = false;
         clearGlide();
+        clearCorrection();
         ic.commitText(text, 1);
     }
 
@@ -362,7 +379,37 @@ public class SwipeKeyboardService extends InputMethodService
             return;
         }
         clearGlide();
-        bar.setSuggestions(predictor.suggest(cx[0], cx[1]));
+        List<String> list = predictor.suggest(cx[0], cx[1]);
+        String fix = autocorrect && !cx[1].isEmpty() && !rejected.contains(cx[1].toLowerCase())
+                ? predictor.autocorrect(cx[0], cx[1]) : null;
+        if (fix != null && !fix.equals(cx[1])) {
+            // Middle: what space will turn it into. Left: keep exactly what was typed.
+            List<String> withFix = new ArrayList<>();
+            withFix.add(fix);
+            withFix.add("“" + cx[1] + "”");
+            for (String w : list) if (!w.equals(fix) && withFix.size() < 3) withFix.add(w);
+            bar.setSuggestions(withFix, true);
+        } else {
+            bar.setSuggestions(list, false);
+        }
+    }
+
+    private void clearCorrection() {
+        corrOriginal = corrFixed = corrSep = corrPrev = null;
+    }
+
+    /** Fix the word before the cursor if it's a typo. Returns {original, fixed, previous word} or null. */
+    private String[] applyAutocorrect(InputConnection ic) {
+        String[] cx = wordContext(ic);
+        String cur = cx[1];
+        if (cur.isEmpty() || rejected.contains(cur.toLowerCase())) return null;
+        String fix = predictor.autocorrect(cx[0], cur);
+        if (fix == null || fix.equals(cur)) return null;
+        ic.beginBatchEdit();
+        ic.deleteSurroundingText(cur.length(), 0);
+        ic.commitText(fix, 1);
+        ic.endBatchEdit();
+        return new String[]{cur, fix, cx[0]};
     }
 
     private void clearGlide() {
@@ -376,13 +423,21 @@ public class SwipeKeyboardService extends InputMethodService
         if (ic == null) return;
         String[] cx = wordContext(ic);
         clearGlide();
+        clearCorrection();
+        boolean literal = word.length() > 2 && word.startsWith("“") && word.endsWith("”");
+        if (literal) {
+            // "Keep what I typed": stop correcting this word
+            word = word.substring(1, word.length() - 1);
+            rejected.add(word.toLowerCase());
+            if (learn) predictor.markKnown(cx[0], word);
+        }
         ic.beginBatchEdit();
         if (!cx[1].isEmpty()) ic.deleteSurroundingText(cx[1].length(), 0);
         CharSequence after = ic.getTextAfterCursor(1, 0);
         boolean spaceAfter = after != null && after.length() > 0 && after.charAt(0) == ' ';
         ic.commitText(spaceAfter ? word : word + " ", 1);
         ic.endBatchEdit();
-        if (learn) predictor.learn(cx[0], word);
+        if (learn && !literal) predictor.learn(cx[0], word);
         autoSpace = !spaceAfter;
         lastSpaceAt = 0;
         updateShift();
@@ -392,6 +447,7 @@ public class SwipeKeyboardService extends InputMethodService
     public void onGlide(float[] xs, float[] ys, int n, int shift) {
         InputConnection ic = getCurrentInputConnection();
         if (ic == null || view == null) return;
+        clearCorrection();
         String[] cx = wordContext(ic);
         String prev = cx[0];
         if (!cx[1].isEmpty()) {
@@ -526,6 +582,7 @@ public class SwipeKeyboardService extends InputMethodService
         if (ic == null) return;
         boolean separator = text.length() == 1 && !isWordChar(text.charAt(0));
         clearGlide();
+        clearCorrection();
 
         // "word " + "," → "word, " after picking a suggestion
         if (autoSpace && SMART_PUNCT.contains(text)) {
@@ -543,6 +600,7 @@ public class SwipeKeyboardService extends InputMethodService
         }
         autoSpace = false;
 
+        String[] corr = separator && autocorrect ? applyAutocorrect(ic) : null;
         if (separator && learn) {
             String[] cx = wordContext(ic);
             if (!cx[1].isEmpty()) predictor.learn(cx[0], cx[1]);
@@ -565,6 +623,12 @@ public class SwipeKeyboardService extends InputMethodService
             ic.commitText(text, 1);
             lastSpaceAt = 0;
         }
+        if (corr != null) {
+            corrOriginal = corr[0];
+            corrFixed = corr[1];
+            corrPrev = corr[2];
+            corrSep = text;
+        }
         updateShift();
     }
 
@@ -573,6 +637,22 @@ public class SwipeKeyboardService extends InputMethodService
         autoSpace = false;
         InputConnection ic = getCurrentInputConnection();
         if (ic == null) return;
+        if (corrFixed != null) {
+            // Backspace straight after an autocorrection puts back what was typed
+            String fixedPart = corrFixed + corrSep;
+            CharSequence before = ic.getTextBeforeCursor(fixedPart.length(), 0);
+            if (before != null && before.toString().equals(fixedPart)) {
+                ic.beginBatchEdit();
+                ic.deleteSurroundingText(fixedPart.length(), 0);
+                ic.commitText(corrOriginal + corrSep, 1);
+                ic.endBatchEdit();
+                rejected.add(corrOriginal.toLowerCase());
+                if (learn) predictor.markKnown(corrPrev, corrOriginal);
+                clearCorrection();
+                return;
+            }
+            clearCorrection();
+        }
         CharSequence sel = ic.getSelectedText(0);
         if (glideWords != null && (sel == null || sel.length() == 0)) {
             // Backspace right after a swipe removes the whole word
@@ -597,6 +677,8 @@ public class SwipeKeyboardService extends InputMethodService
         InputConnection ic = getCurrentInputConnection();
         EditorInfo ei = getCurrentInputEditorInfo();
         if (ic == null) return;
+        clearCorrection();
+        if (autocorrect) applyAutocorrect(ic);
         if (learn) {
             String[] cx = wordContext(ic);
             if (!cx[1].isEmpty()) predictor.learn(cx[0], cx[1]);
@@ -616,6 +698,7 @@ public class SwipeKeyboardService extends InputMethodService
     public void onCursor(int steps) {
         autoSpace = false;
         clearGlide();
+        clearCorrection();
         int code = steps > 0 ? KeyEvent.KEYCODE_DPAD_RIGHT : KeyEvent.KEYCODE_DPAD_LEFT;
         for (int i = 0; i < Math.abs(steps); i++) sendDownUpKeyEvents(code);
     }

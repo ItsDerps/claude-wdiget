@@ -113,6 +113,20 @@ public class SetupActivity extends Activity {
         glide.setPadding(0, px(8), 0, px(8));
         col.addView(glide);
 
+        Switch fix = new Switch(this);
+        fix.setText("Autocorrect");
+        fix.setTextColor(Color.WHITE);
+        fix.setTextSize(16);
+        fix.setChecked(prefs.getBoolean(SwipeKeyboardService.PREF_AUTOCORRECT, true));
+        fix.setOnCheckedChangeListener((b, on) -> prefs.edit().putBoolean(SwipeKeyboardService.PREF_AUTOCORRECT, on).apply());
+        fix.setPadding(0, px(8), 0, px(8));
+        col.addView(fix);
+        TextView fixHelp = text("Fixes typos when you press space or punctuation. The fix is shown in blue "
+                + "above the keys first. Press backspace straight after to undo it, or tap the word in quotes "
+                + "to keep what you typed — it won't be corrected again.", 14);
+        fixHelp.setTextColor(0xFFBBBBBB);
+        col.addView(fixHelp);
+
         // --- Notes
         col.addView(section("Notes"));
         TextView notesHelp = text("Notes show up under the notes button on the keyboard. Tap one there to paste it.", 14);
@@ -138,6 +152,36 @@ public class SetupActivity extends Activity {
         noteList = new LinearLayout(this);
         noteList.setOrientation(LinearLayout.VERTICAL);
         col.addView(noteList);
+
+        // --- Data
+        col.addView(section("Your data"));
+        TextView data = text("Everything stays on this phone, inside Swipe Keys' private storage — other apps "
+                + "can't read it, it isn't backed up, and uninstalling deletes it.\n\n"
+                + "• Words you type often and which words follow which: a file called learned.txt "
+                + "(never from password boxes, or apps that ask for incognito typing)\n"
+                + "• Notes, recent emoji and settings: the app's preferences file\n"
+                + "• Recently copied text: only in memory, gone when the keyboard restarts; "
+                + "copies Android marks as sensitive (like passwords) are skipped\n"
+                + "• The dictionary is built into the app\n\n"
+                + "Voice typing is the one exception: the mic hands your speech to your phone's speech "
+                + "service (usually Google), which may process it online.", 14);
+        data.setTextColor(0xFFBBBBBB);
+        col.addView(data);
+        Button clear = new Button(this);
+        clear.setText("Forget learned words");
+        clear.setOnClickListener(v -> new android.app.AlertDialog.Builder(this)
+                .setTitle("Forget learned words?")
+                .setMessage("Suggestions, swipe-to-write and autocorrect go back to the built-in dictionary. "
+                        + "Notes are kept.")
+                .setPositiveButton("Forget", (d, w) -> {
+                    //noinspection ResultOfMethodCallIgnored
+                    new java.io.File(getFilesDir(), "learned.txt").delete();
+                    prefs.edit().putBoolean(SwipeKeyboardService.PREF_CLEAR_LEARNED, true).apply();
+                    android.widget.Toast.makeText(this, "Learned words cleared", android.widget.Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton("Cancel", null)
+                .show());
+        col.addView(clear);
 
         TextView credits = text("Word list: wordfreq (CC BY-SA 4.0) and SCOWL.", 12);
         credits.setTextColor(0xFF777777);

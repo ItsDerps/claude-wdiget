@@ -38,6 +38,7 @@ public class SuggestionBar extends View {
     private Listener listener;
     private final String[] slots = new String[3]; // left, middle, right
     private boolean toolsOpen;
+    private boolean highlightBest;
     private boolean listening;
     private String listeningText = "";
     private int highlightTool = -1;               // a tool whose panel is open
@@ -61,7 +62,11 @@ public class SuggestionBar extends View {
 
     public void setListener(Listener l) { listener = l; }
 
-    public void setSuggestions(List<String> s) {
+    public void setSuggestions(List<String> s) { setSuggestions(s, false); }
+
+    /** {@code highlight}: the best suggestion is an autocorrection that space will apply. */
+    public void setSuggestions(List<String> s, boolean highlight) {
+        if (highlight != highlightBest) { highlightBest = highlight; invalidate(); }
         String m = s.size() > 0 ? s.get(0) : null;
         String l = s.size() > 1 ? s.get(1) : null;
         String r = s.size() > 2 ? s.get(2) : null;
@@ -187,7 +192,7 @@ public class SuggestionBar extends View {
             if (slots[i] == null) continue;
             text.setTypeface(i == 1 ? medium : regular);
             text.setTextSize(sp(17));
-            text.setColor(colText);
+            text.setColor(i == 1 && highlightBest ? ACCENT : colText);
             float maxW = cell - dp(12);
             while (text.measureText(slots[i]) > maxW && text.getTextSize() > sp(12)) {
                 text.setTextSize(text.getTextSize() - sp(1));
