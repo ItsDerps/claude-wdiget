@@ -15,17 +15,25 @@ jobs:
         with:
           gradle-version: '8.9'
       - run: gradle assembleDebug --no-daemon
-      - run: cp app/build/outputs/apk/debug/app-debug.apk ClaudeWidget.apk
+      - run: |
+          cp app/build/outputs/apk/debug/app-debug.apk ClaudeWidget.apk
+          cp keyboard/build/outputs/apk/debug/keyboard-debug.apk SwipeKeys.apk
       - uses: actions/upload-artifact@v4
         with:
           name: ClaudeWidget
           path: ClaudeWidget.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SwipeKeys
+          path: SwipeKeys.apk
       - name: Publish as a release (easy phone download)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
           name: Claude Widget
-          files: ClaudeWidget.apk
+          files: |
+            ClaudeWidget.apk
+            SwipeKeys.apk
           make_latest: true
     permissions:
       contents: write

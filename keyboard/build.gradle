@@ -1,0 +1,31 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'uk.dnm.swipekeys'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'uk.dnm.swipekeys'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+    }
+
+    // Same fixed key as the widget so new builds install over old ones
+    signingConfigs {
+        fixed {
+            storeFile file('../app/widget.keystore')
+            storePassword 'claudewidget'
+            keyAlias 'widget'
+            keyPassword 'claudewidget'
+        }
+    }
+    buildTypes {
+        debug { signingConfig signingConfigs.fixed }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
