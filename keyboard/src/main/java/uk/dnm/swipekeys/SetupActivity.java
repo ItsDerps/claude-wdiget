@@ -36,6 +36,7 @@ public class SetupActivity extends Activity {
 
         TextView how = text("Tap a key for the letter. Pull a key DOWN to type the small character "
                 + "shown above it — numbers on the top row, symbols on the rest.\n\n"
+                + "• Tap a suggestion above the keys to finish the word — it learns the words you use\n"
                 + "• Tap shift once for a capital, twice quickly for caps lock\n"
                 + "• Slide along the space bar to move the cursor\n"
                 + "• Double-tap space for a full stop\n"
