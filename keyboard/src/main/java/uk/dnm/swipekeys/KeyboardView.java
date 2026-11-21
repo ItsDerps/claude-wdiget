@@ -10,6 +10,7 @@ import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.text.InputType;
 import android.util.SparseArray;
 import android.util.TypedValue;
@@ -24,6 +25,7 @@ import java.util.List;
 /**
  * A keyboard where every letter also carries a second character (shown small, above it).
  * Tap a key for the letter; pull it DOWN for the second character, like the iPad keyboard.
+ * Slide sideways across the letters to swipe-write a whole word.
  */
 public class KeyboardView extends View {
 
@@ -33,12 +35,17 @@ public class KeyboardView extends View {
         void onEnter();
         void onCursor(int steps);
         void onSwitchIme();
+        void onEmojiKey();
+        /** A swipe-to-write trail. {@code shift} is the shift state when the swipe started. */
+        void onGlide(float[] xs, float[] ys, int n, int shift);
+        void onOneHandChanged(int side);
     }
 
     static final int CHAR = 0, SHIFT = 1, DELETE = 2, ENTER = 3, SPACE = 4,
-            TO_SYM = 5, TO_SYM2 = 6, TO_ALPHA = 7;
+            TO_SYM = 5, TO_SYM2 = 6, TO_ALPHA = 7, EMOJI = 8, SIDE_SWAP = 9, SIDE_FULL = 10;
     static final int MODE_ALPHA = 0, MODE_SYM = 1, MODE_SYM2 = 2;
     static final int SHIFT_OFF = 0, SHIFT_ON = 1, SHIFT_LOCK = 2;
+    static final int HAND_OFF = 0, HAND_LEFT = 1, HAND_RIGHT = 2;
 
     static final class Key {
         final int type;
@@ -63,9 +70,24 @@ public class KeyboardView extends View {
         boolean flickTicked;
         boolean cursorMode;
         boolean consumed;
+        boolean glide;
+        int glideShift;
+        float[] gx = new float[256], gy = new float[256];
+        int gn;
+
+        void addPoint(float x, float y) {
+            if (gn == gx.length) {
+                gx = java.util.Arrays.copyOf(gx, gn * 2);
+                gy = java.util.Arrays.copyOf(gy, gn * 2);
+            }
+            gx[gn] = x;
+            gy[gn] = y;
+            gn++;
+        }
     }
 
     private static final float FLICK_COMMIT = 0.5f;
+    private static final long TRAIL_FADE_MS = 220;
 
     private Listener listener;
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -75,6 +97,7 @@ public class KeyboardView extends View {
     private final List<List<Key>> symRows = buildSym();
     private final List<List<Key>> sym2Rows = buildSym2();
     private List<List<Key>> rows = alphaRows;
+    private final List<Key> sideKeys = new ArrayList<>();
 
     private int mode = MODE_ALPHA;
     private int shift = SHIFT_OFF;
@@ -83,6 +106,17 @@ public class KeyboardView extends View {
     private boolean typedInSym;
     private String enterLabel;
     private boolean enterAccent;
+    private boolean glideEnabled = true;
+    private int oneHand = HAND_OFF;
+
+    // Letter key centres (a..z) and key cell size, for the swipe-to-write decoder
+    private final float[] letterX = new float[26], letterY = new float[26];
+    private float unitW, rowH;
+
+    // Fading trail after a swipe
+    private float[] trailX, trailY;
+    private int trailN;
+    private long trailEnd;
 
     // Theme
     private int colBg, colKey, colSpecial, colPressed, colShadow, colText, colAlt, colAccent, colAccentPressed;
@@ -90,6 +124,7 @@ public class KeyboardView extends View {
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint text = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint icon = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint trail = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path path = new Path();
     private final RectF tmp = new RectF();
     private final Paint.FontMetrics fm = new Paint.FontMetrics();
@@ -116,6 +151,10 @@ public class KeyboardView extends View {
         icon.setStrokeWidth(dp(1.7f));
         icon.setStrokeJoin(Paint.Join.ROUND);
         icon.setStrokeCap(Paint.Cap.ROUND);
+        trail.setStyle(Paint.Style.STROKE);
+        trail.setStrokeWidth(dp(5));
+        trail.setStrokeCap(Paint.Cap.ROUND);
+        trail.setStrokeJoin(Paint.Join.ROUND);
         applyTheme();
     }
 
@@ -162,11 +201,26 @@ public class KeyboardView extends View {
         }
     }
 
+    public void setGlideEnabled(boolean on) { glideEnabled = on; }
+
+    public void setOneHand(int side) {
+        if (side == oneHand) return;
+        oneHand = side;
+        layoutKeys();
+        invalidate();
+    }
+
+    public int getOneHand() { return oneHand; }
+
+    float[] letterX() { return letterX; }
+    float[] letterY() { return letterY; }
+    float keyWidth() { return unitW; }
+    float keyHeight() { return rowH; }
+
     private void setMode(int m) {
         mode = m;
         rows = m == MODE_ALPHA ? alphaRows : m == MODE_SYM ? symRows : sym2Rows;
         typedInSym = false;
-        layoutKeys();
         invalidate();
     }
 
@@ -183,9 +237,10 @@ public class KeyboardView extends View {
 
     private static List<Key> bottomRow(int modeType, String modeLabel) {
         List<Key> r = new ArrayList<>();
-        r.add(new Key(modeType, modeLabel, null, 1.5f));
+        r.add(new Key(modeType, modeLabel, null, 1.25f));
+        r.add(new Key(EMOJI, null, null, 1.25f));
         r.add(new Key(CHAR, ",", "!", 1f));
-        r.add(new Key(SPACE, null, null, 5f));
+        r.add(new Key(SPACE, null, null, 4f));
         r.add(new Key(CHAR, ".", "?", 1f));
         r.add(new Key(ENTER, null, null, 1.5f));
         return r;
@@ -253,30 +308,64 @@ public class KeyboardView extends View {
     private void layoutKeys() {
         float w = getWidth(), h = getHeight();
         if (w == 0 || h == 0) return;
+        float areaW = oneHand == HAND_OFF ? w : w * 0.84f;
+        float areaX = oneHand == HAND_RIGHT ? w - areaW : 0;
+        layoutRows(alphaRows, areaX, areaW, h);
+        layoutRows(symRows, areaX, areaW, h);
+        layoutRows(sym2Rows, areaX, areaW, h);
+
+        for (List<Key> row : alphaRows) {
+            for (Key k : row) {
+                if (k.type == CHAR && k.main.charAt(0) >= 'a' && k.main.charAt(0) <= 'z') {
+                    letterX[k.main.charAt(0) - 'a'] = k.rect.centerX();
+                    letterY[k.main.charAt(0) - 'a'] = k.rect.centerY();
+                }
+            }
+        }
+
+        sideKeys.clear();
+        if (oneHand != HAND_OFF) {
+            float sx = oneHand == HAND_LEFT ? areaW : 0, sw = w - areaW;
+            float top = dp(6), bottom = h - dp(10), mid = (top + bottom) / 2;
+            Key swap = new Key(SIDE_SWAP, null, null, 0);
+            swap.hit.set(sx, 0, sx + sw, mid);
+            swap.rect.set(sx + dp(6), mid - dp(64), sx + sw - dp(6), mid - dp(8));
+            Key full = new Key(SIDE_FULL, null, null, 0);
+            full.hit.set(sx, mid, sx + sw, h);
+            full.rect.set(sx + dp(6), mid + dp(8), sx + sw - dp(6), mid + dp(64));
+            sideKeys.add(swap);
+            sideKeys.add(full);
+        }
+    }
+
+    private void layoutRows(List<List<Key>> layout, float areaX, float areaW, float h) {
         float padX = dp(3), padTop = dp(6), padBottom = dp(10);
-        float unit = (w - 2 * padX) / 10f;
-        float rowH = (h - padTop - padBottom) / rows.size();
+        float unit = (areaW - 2 * padX) / 10f;
+        float rh = (h - padTop - padBottom) / layout.size();
+        unitW = unit;
+        rowH = rh;
         float gx = dp(3), gy = dp(5.5f);
-        for (int r = 0; r < rows.size(); r++) {
-            List<Key> row = rows.get(r);
+        for (int r = 0; r < layout.size(); r++) {
+            List<Key> row = layout.get(r);
             float total = 0;
             for (Key k : row) total += k.units;
-            float x = padX + (10f - total) * unit / 2f;
-            float top = padTop + r * rowH;
+            float x = areaX + padX + (10f - total) * unit / 2f;
+            float top = padTop + r * rh;
             for (Key k : row) {
                 float kw = k.units * unit;
-                k.hit.set(x, top, x + kw, top + rowH);
-                k.rect.set(x + gx, top + gy, x + kw - gx, top + rowH - gy);
+                k.hit.set(x, top, x + kw, top + rh);
+                k.rect.set(x + gx, top + gy, x + kw - gx, top + rh - gy);
                 x += kw;
             }
-            row.get(0).hit.left = 0;
-            row.get(row.size() - 1).hit.right = w;
+            row.get(0).hit.left = areaX;
+            row.get(row.size() - 1).hit.right = areaX + areaW;
             if (r == 0) for (Key k : row) k.hit.top = 0;
-            if (r == rows.size() - 1) for (Key k : row) k.hit.bottom = h;
+            if (r == layout.size() - 1) for (Key k : row) k.hit.bottom = h;
         }
     }
 
     private Key findKey(float x, float y) {
+        for (Key k : sideKeys) if (k.hit.contains(x, y)) return k;
         Key best = null;
         float bestD = Float.MAX_VALUE;
         for (List<Key> row : rows) {
@@ -297,6 +386,7 @@ public class KeyboardView extends View {
         switch (e.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
             case MotionEvent.ACTION_POINTER_DOWN: {
+                if (isGliding()) break; // ignore other fingers while swipe-writing
                 int idx = e.getActionIndex();
                 flushPendingChars();
                 Key k = findKey(e.getX(idx), e.getY(idx));
@@ -314,7 +404,15 @@ public class KeyboardView extends View {
             case MotionEvent.ACTION_MOVE: {
                 for (int i = 0; i < e.getPointerCount(); i++) {
                     Touch t = touches.get(e.getPointerId(i));
-                    if (t != null) onKeyMove(t, e.getX(i), e.getY(i));
+                    if (t == null) continue;
+                    if (t.glide) {
+                        for (int hst = 0; hst < e.getHistorySize(); hst++) {
+                            t.addPoint(e.getHistoricalX(i, hst), e.getHistoricalY(i, hst));
+                        }
+                        t.addPoint(e.getX(i), e.getY(i));
+                    } else {
+                        onKeyMove(t, e.getX(i), e.getY(i));
+                    }
                 }
                 invalidate();
                 break;
@@ -340,12 +438,17 @@ public class KeyboardView extends View {
         return true;
     }
 
+    private boolean isGliding() {
+        for (int i = 0; i < touches.size(); i++) if (touches.valueAt(i).glide) return true;
+        return false;
+    }
+
     /** When a new finger lands, commit letters still held by other fingers so fast typing stays in order. */
     private void flushPendingChars() {
         List<Integer> done = new ArrayList<>();
         for (int i = 0; i < touches.size(); i++) {
             Touch t = touches.valueAt(i);
-            if (t.key.type == CHAR && t.progress < 0.2f) {
+            if (t.key.type == CHAR && !t.glide && t.progress < 0.2f) {
                 commitChar(t);
                 done.add(touches.keyAt(i));
             }
@@ -368,7 +471,7 @@ public class KeyboardView extends View {
                 handler.postDelayed(deleteRepeat, 400);
                 break;
             case SHIFT: {
-                long now = android.os.SystemClock.uptimeMillis();
+                long now = SystemClock.uptimeMillis();
                 if (shift == SHIFT_LOCK) shift = SHIFT_OFF;
                 else if (shift == SHIFT_ON) shift = (now - lastShiftTap < 350) ? SHIFT_LOCK : SHIFT_OFF;
                 else shift = SHIFT_ON;
@@ -387,14 +490,26 @@ public class KeyboardView extends View {
 
     private void onKeyMove(Touch t, float x, float y) {
         Key k = t.key;
-        if (k.type == CHAR && k.alt != null) {
-            float p = (y - t.downY) / dp(26);
-            t.progress = Math.max(0f, Math.min(1f, p));
-            if (t.progress >= FLICK_COMMIT && !t.flickTicked) {
-                t.flickTicked = true;
-                performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK);
-            } else if (t.progress < FLICK_COMMIT && t.flickTicked) {
-                t.flickTicked = false;
+        if (k.type == CHAR) {
+            float dx = x - t.downX, dy = y - t.downY;
+            // Sideways or upwards across the letters = swipe-to-write. Downwards = the key's second character.
+            if (glideEnabled && mode == MODE_ALPHA && touches.size() == 1 && Character.isLetter(k.main.charAt(0))
+                    && (Math.abs(dx) > unitW * 0.6f || dy < -rowH * 0.5f)) {
+                t.glide = true;
+                t.glideShift = shift;
+                t.progress = 0;
+                t.addPoint(t.downX, t.downY);
+                t.addPoint(x, y);
+                return;
+            }
+            if (k.alt != null) {
+                t.progress = Math.max(0f, Math.min(1f, dy / dp(26)));
+                if (t.progress >= FLICK_COMMIT && !t.flickTicked) {
+                    t.flickTicked = true;
+                    performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK);
+                } else if (t.progress < FLICK_COMMIT && t.flickTicked) {
+                    t.flickTicked = false;
+                }
             }
         } else if (k.type == SPACE) {
             // Slide along the space bar to move the cursor
@@ -414,7 +529,8 @@ public class KeyboardView extends View {
     private void onKeyUp(Touch t) {
         switch (t.key.type) {
             case CHAR:
-                commitChar(t);
+                if (t.glide) finishGlide(t);
+                else commitChar(t);
                 break;
             case SPACE:
                 handler.removeCallbacks(spaceLongPress);
@@ -434,8 +550,29 @@ public class KeyboardView extends View {
             case TO_SYM: setMode(MODE_SYM); break;
             case TO_SYM2: setMode(MODE_SYM2); break;
             case TO_ALPHA: setMode(MODE_ALPHA); break;
+            case EMOJI:
+                if (listener != null) listener.onEmojiKey();
+                break;
+            case SIDE_SWAP:
+                setOneHand(oneHand == HAND_LEFT ? HAND_RIGHT : HAND_LEFT);
+                if (listener != null) listener.onOneHandChanged(oneHand);
+                break;
+            case SIDE_FULL:
+                setOneHand(HAND_OFF);
+                if (listener != null) listener.onOneHandChanged(oneHand);
+                break;
             default: break;
         }
+    }
+
+    private void finishGlide(Touch t) {
+        trailX = java.util.Arrays.copyOf(t.gx, t.gn);
+        trailY = java.util.Arrays.copyOf(t.gy, t.gn);
+        trailN = t.gn;
+        trailEnd = SystemClock.uptimeMillis() + TRAIL_FADE_MS;
+        if (shift == SHIFT_ON) shift = SHIFT_OFF;
+        if (listener != null) listener.onGlide(t.gx, t.gy, t.gn, t.glideShift);
+        postInvalidateOnAnimation();
     }
 
     private void commitChar(Touch t) {
@@ -481,11 +618,39 @@ public class KeyboardView extends View {
         for (List<Key> row : rows) {
             for (Key k : row) drawKey(c, k, touchFor(k));
         }
+        for (Key k : sideKeys) drawSideKey(c, k, touchFor(k) != null);
+        drawTrail(c);
+    }
+
+    private void drawTrail(Canvas c) {
+        Touch live = null;
+        for (int i = 0; i < touches.size(); i++) if (touches.valueAt(i).glide) live = touches.valueAt(i);
+        float[] xs;
+        float[] ys;
+        int n;
+        int alpha;
+        if (live != null) {
+            xs = live.gx; ys = live.gy; n = live.gn; alpha = 200;
+        } else {
+            long left = trailEnd - SystemClock.uptimeMillis();
+            if (left <= 0 || trailN < 2) return;
+            xs = trailX; ys = trailY; n = trailN;
+            alpha = (int) (200 * left / (float) TRAIL_FADE_MS);
+            postInvalidateOnAnimation();
+        }
+        if (n < 2) return;
+        path.reset();
+        path.moveTo(xs[0], ys[0]);
+        for (int i = 1; i < n; i++) path.lineTo(xs[i], ys[i]);
+        trail.setColor(colAccent);
+        trail.setAlpha(alpha);
+        c.drawPath(path, trail);
     }
 
     private Touch touchFor(Key k) {
         for (int i = 0; i < touches.size(); i++) {
-            if (touches.valueAt(i).key == k) return touches.valueAt(i);
+            Touch t = touches.valueAt(i);
+            if (t.key == k && !t.glide) return t;
         }
         return null;
     }
@@ -517,7 +682,26 @@ public class KeyboardView extends View {
                 if (enterLabel != null) drawLabel(c, enterLabel, cx, cy, sp(15), fg, 255);
                 else drawReturn(c, cx, cy, fg);
                 break;
+            case EMOJI:
+                Icons.smiley(c, Icons.stroke(icon, fg, dp(1.7f)), cx, cy, dp(20));
+                break;
             default: drawLabel(c, k.main, cx, cy, sp(16), fg, 255); break;
+        }
+    }
+
+    private void drawSideKey(Canvas c, Key k, boolean pressed) {
+        float cx = k.rect.centerX(), cy = k.rect.centerY();
+        if (pressed) {
+            fill.setColor(colPressed);
+            c.drawCircle(cx, cy, dp(22), fill);
+        }
+        Icons.stroke(icon, colText, dp(2f));
+        if (k.type == SIDE_FULL) {
+            Icons.expand(c, icon, cx, cy, dp(22));
+        } else if (oneHand == HAND_LEFT) {
+            Icons.chevronRight(c, icon, cx, cy, dp(26));
+        } else {
+            Icons.chevronLeft(c, icon, cx, cy, dp(26));
         }
     }
 
@@ -563,7 +747,7 @@ public class KeyboardView extends View {
         path.lineTo(cx - stem, cy);
         path.lineTo(cx - s / 2, cy);
         path.close();
-        icon.setColor(color);
+        Icons.stroke(icon, color, dp(1.7f));
         icon.setStyle(shift == SHIFT_OFF ? Paint.Style.STROKE : Paint.Style.FILL_AND_STROKE);
         c.drawPath(path, icon);
         if (shift == SHIFT_LOCK) {
@@ -574,26 +758,12 @@ public class KeyboardView extends View {
     }
 
     private void drawDelete(Canvas c, float cx, float cy, int color) {
-        float w2 = dp(11), h2 = dp(7.5f);
-        path.reset();
-        path.moveTo(cx - w2, cy);
-        path.lineTo(cx - w2 + dp(6), cy - h2);
-        path.lineTo(cx + w2, cy - h2);
-        path.lineTo(cx + w2, cy + h2);
-        path.lineTo(cx - w2 + dp(6), cy + h2);
-        path.close();
-        icon.setColor(color);
-        icon.setStyle(Paint.Style.STROKE);
-        c.drawPath(path, icon);
-        float xc = cx + dp(2.5f), d = dp(3.2f);
-        c.drawLine(xc - d, cy - d, xc + d, cy + d, icon);
-        c.drawLine(xc - d, cy + d, xc + d, cy - d, icon);
+        Icons.backspace(c, Icons.stroke(icon, color, dp(1.7f)), cx, cy, dp(22));
     }
 
     private void drawReturn(Canvas c, float cx, float cy, int color) {
         float r = dp(8), y = cy + dp(2), a = dp(4);
-        icon.setColor(color);
-        icon.setStyle(Paint.Style.STROKE);
+        Icons.stroke(icon, color, dp(1.7f));
         path.reset();
         path.moveTo(cx + r, cy - r);
         path.lineTo(cx + r, y);

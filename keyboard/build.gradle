@@ -8,8 +8,8 @@ android {
         applicationId 'uk.dnm.swipekeys'
         minSdk 26
         targetSdk 34
-        versionCode 1
-        versionName '1.0'
+        versionCode 3
+        versionName '1.2'
     }
 
     // Same fixed key as the widget so new builds install over old ones

@@ -34,15 +34,15 @@ final class Predictor {
     private final Handler main = new Handler(Looper.getMainLooper());
 
     // Bundled dictionary (filled in on a background thread, then swapped in on the main thread)
-    private String[] words = new String[0];   // display form, e.g. "don't", "I'm"
-    private String[] keys = new String[0];    // lowercase, apostrophes removed: "dont", "im"
-    private int[] freq = new int[0];          // Zipf frequency x100 (~250..770)
+    String[] words = new String[0];   // display form, e.g. "don't", "I'm"
+    String[] keys = new String[0];    // lowercase, apostrophes removed: "dont", "im"
+    int[] freq = new int[0];          // Zipf frequency x100 (~250..770)
     private Integer[] byKeyOrder = new Integer[0];
-    private HashMap<String, Integer> exact = new HashMap<>();
+    HashMap<String, Integer> exact = new HashMap<>();
 
     // Learned from the user
-    private HashMap<String, Integer> userWords = new HashMap<>();
-    private HashMap<String, HashMap<String, Integer>> next = new HashMap<>();
+    HashMap<String, Integer> userWords = new HashMap<>();
+    HashMap<String, HashMap<String, Integer>> next = new HashMap<>();
     private boolean dirty;
 
     Predictor(Context context) {
