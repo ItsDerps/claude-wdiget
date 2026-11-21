@@ -248,8 +248,8 @@ final class Predictor {
                 second = w; secondScore = score;
             }
         }
-        if (best == null || bestScore < MIN_FIX_SCORE) return null;
-        if (second != null && bestScore - secondScore < MIN_FIX_MARGIN) return null; // too close to call
+        if (best == null || bestScore < fixScore) return null;
+        if (second != null && bestScore - secondScore < fixMargin) return null; // too close to call
         return matchCase(best, typed);
     }
 
@@ -257,8 +257,16 @@ final class Predictor {
         return w.length() > 1 && w.equals(w.toUpperCase());
     }
 
-    static int MIN_FIX_SCORE = 300;
-    static int MIN_FIX_MARGIN = 40;
+    // How sure autocorrect must be. Raised when the user keeps undoing corrections.
+    int fixScore = 300;
+    int fixMargin = 40;
+
+    /** Make autocorrect more careful the more often its fixes get undone. */
+    void tuneAutocorrect(int fixesKept, int fixesUndone) {
+        double undoRate = fixesUndone / (double) (fixesKept + fixesUndone + 8);
+        fixScore = 300 + (int) (200 * undoRate);
+        fixMargin = 40 + (int) (160 * undoRate);
+    }
 
     /** A dictionary word, or one the user has typed at least twice. */
     boolean known(String word) {
@@ -304,7 +312,11 @@ final class Predictor {
         String k = key(typed);
         if (k.isEmpty()) return new ArrayList<>();
 
-        // 1. Dictionary words that start with what's typed
+        // 1. Dictionary words that start with what's typed (keep only the best few: short prefixes match thousands)
+        final int keep = 12;
+        int[] topI = new int[keep];
+        double[] topS = new double[keep];
+        int topN = 0;
         int lo = lowerBound(k);
         for (int j = lo; j < byKeyOrder.length; j++) {
             int i = byKeyOrder[j];
@@ -312,8 +324,21 @@ final class Predictor {
             double s = freq[i];
             if (keys[i].length() == k.length()) s += 120;          // exactly what was typed
             else s -= 8 * Math.min(6, keys[i].length() - k.length()); // slight preference for shorter
-            add(scores, words[i], s);
+            if (nextCounts != null) {
+                Integer c = nextCounts.get(words[i]);
+                if (c != null) s += 90 * Math.log(1 + c);
+            }
+            if (topN == keep && s <= topS[keep - 1]) continue;
+            int pos = topN < keep ? topN++ : keep - 1;
+            while (pos > 0 && topS[pos - 1] < s) {
+                topS[pos] = topS[pos - 1];
+                topI[pos] = topI[pos - 1];
+                pos--;
+            }
+            topS[pos] = s;
+            topI[pos] = i;
         }
+        for (int t = 0; t < topN; t++) add(scores, words[topI[t]], topS[t]);
 
         // 2. Words the user has taught it
         for (Map.Entry<String, Integer> e : userWords.entrySet()) {
@@ -336,11 +361,13 @@ final class Predictor {
             }
         }
 
-        // 4. Boost words that usually follow the previous one
+        // 4. Boost words that usually follow the previous one (dictionary prefix matches were boosted above)
         if (nextCounts != null) {
             for (Map.Entry<String, Double> e : scores.entrySet()) {
-                Integer c = nextCounts.get(e.getKey());
-                if (c != null) e.setValue(e.getValue() + 90 * Math.log(1 + c));
+                if (!key(e.getKey()).startsWith(k) || !exact.containsKey(key(e.getKey()))) {
+                    Integer c = nextCounts.get(e.getKey());
+                    if (c != null) e.setValue(e.getValue() + 90 * Math.log(1 + c));
+                }
             }
         }
         return top(scores, typed);

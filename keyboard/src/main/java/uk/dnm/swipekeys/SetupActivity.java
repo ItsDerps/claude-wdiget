@@ -40,6 +40,7 @@ public class SetupActivity extends Activity {
     private EditText noteInput;
     private LinearLayout noteList;
     private ScrollView scroll;
+    private TextView personal;
 
     @Override
     protected void onCreate(Bundle saved) {
@@ -104,6 +105,20 @@ public class SetupActivity extends Activity {
 
         // --- Settings
         col.addView(section("Settings"));
+        col.addView(label("Keyboard height"));
+        col.addView(choice(SwipeKeyboardService.PREF_HEIGHT, "Small", "Normal", "Large"));
+        col.addView(label("Pull down for numbers & symbols"));
+        col.addView(choice(SwipeKeyboardService.PREF_FLICK, "Short", "Normal", "Long"));
+
+        Switch vibrate = new Switch(this);
+        vibrate.setText("Vibrate on key press");
+        vibrate.setTextColor(Color.WHITE);
+        vibrate.setTextSize(16);
+        vibrate.setChecked(prefs.getBoolean(SwipeKeyboardService.PREF_VIBRATE, true));
+        vibrate.setOnCheckedChangeListener((b, on) -> prefs.edit().putBoolean(SwipeKeyboardService.PREF_VIBRATE, on).apply());
+        vibrate.setPadding(0, px(14), 0, px(8));
+        col.addView(vibrate);
+
         Switch glide = new Switch(this);
         glide.setText("Swipe to write");
         glide.setTextColor(Color.WHITE);
@@ -153,13 +168,42 @@ public class SetupActivity extends Activity {
         noteList.setOrientation(LinearLayout.VERTICAL);
         col.addView(noteList);
 
+        // --- Personalisation & memory
+        col.addView(section("Personalisation"));
+        Switch memory = new Switch(this);
+        memory.setText("Keyboard memory");
+        memory.setTextColor(Color.WHITE);
+        memory.setTextSize(16);
+        memory.setChecked(prefs.getBoolean(SwipeKeyboardService.PREF_MEMORY, true));
+        memory.setPadding(0, px(8), 0, px(8));
+        col.addView(memory);
+        TextView memHelp = text("", 14);
+        memHelp.setTextColor(0xFFBBBBBB);
+        Runnable memText = () -> memHelp.setText(memory.isChecked()
+                ? "On: Swipe Keys learns your words, which words you use together, where your fingers land on "
+                + "each key, how much you like autocorrect, your recent emoji and recently copied text. "
+                + "It all stays on this phone."
+                : "Off: nothing new is learned or saved — no words, taps, emoji or copied text. What it already "
+                + "knows still helps (delete it below if you want). Notes still save, because you save them on purpose. "
+                + "You can also flip this from the eye button in the keyboard's tools.");
+        memText.run();
+        memory.setOnCheckedChangeListener((b, on) -> {
+            prefs.edit().putBoolean(SwipeKeyboardService.PREF_MEMORY, on).apply();
+            memText.run();
+        });
+        col.addView(memHelp);
+        personal = text("", 14);
+        personal.setPadding(0, px(12), 0, 0);
+        col.addView(personal);
+
         // --- Data
         col.addView(section("Your data"));
         TextView data = text("Everything stays on this phone, inside Swipe Keys' private storage — other apps "
                 + "can't read it, it isn't backed up, and uninstalling deletes it.\n\n"
                 + "• Words you type often and which words follow which: a file called learned.txt "
                 + "(never from password boxes, or apps that ask for incognito typing)\n"
-                + "• Notes, recent emoji and settings: the app's preferences file\n"
+                + "• Where you tap each key, autocorrect history, notes, recent emoji and settings: "
+                + "the app's preferences file\n"
                 + "• Recently copied text: only in memory, gone when the keyboard restarts; "
                 + "copies Android marks as sensitive (like passwords) are skipped\n"
                 + "• The dictionary is built into the app\n\n"
@@ -168,16 +212,21 @@ public class SetupActivity extends Activity {
         data.setTextColor(0xFFBBBBBB);
         col.addView(data);
         Button clear = new Button(this);
-        clear.setText("Forget learned words");
+        clear.setText("Delete everything it has learned");
         clear.setOnClickListener(v -> new android.app.AlertDialog.Builder(this)
-                .setTitle("Forget learned words?")
-                .setMessage("Suggestions, swipe-to-write and autocorrect go back to the built-in dictionary. "
-                        + "Notes are kept.")
-                .setPositiveButton("Forget", (d, w) -> {
+                .setTitle("Delete everything learned?")
+                .setMessage("Learned words, your tap positions, autocorrect history, recent emoji and copied text "
+                        + "are deleted. The keyboard goes back to how it was when installed. Notes are kept.")
+                .setPositiveButton("Delete", (d, w) -> {
                     //noinspection ResultOfMethodCallIgnored
                     new java.io.File(getFilesDir(), "learned.txt").delete();
-                    prefs.edit().putBoolean(SwipeKeyboardService.PREF_CLEAR_LEARNED, true).apply();
-                    android.widget.Toast.makeText(this, "Learned words cleared", android.widget.Toast.LENGTH_SHORT).show();
+                    prefs.edit().remove(SwipeKeyboardService.PREF_TOUCH_MODEL)
+                            .remove(SwipeKeyboardService.PREF_FIXES_KEPT)
+                            .remove(SwipeKeyboardService.PREF_FIXES_UNDONE)
+                            .remove("recent_emoji")
+                            .putBoolean(SwipeKeyboardService.PREF_CLEAR_LEARNED, true).apply();
+                    android.widget.Toast.makeText(this, "Deleted", android.widget.Toast.LENGTH_SHORT).show();
+                    refreshPersonal();
                 })
                 .setNegativeButton("Cancel", null)
                 .show());
@@ -236,6 +285,61 @@ public class SetupActivity extends Activity {
         super.onResume();
         refresh();
         refreshNotes();
+        refreshPersonal();
+    }
+
+    /** A summary of how well the keyboard knows you. */
+    private void refreshPersonal() {
+        int words = 0, pairs = 0;
+        java.io.File f = new java.io.File(getFilesDir(), "learned.txt");
+        if (f.exists()) {
+            try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.FileReader(f))) {
+                String line;
+                while ((line = r.readLine()) != null) {
+                    if (line.startsWith("w\t")) words++;
+                    else if (line.startsWith("n\t")) pairs++;
+                }
+            } catch (java.io.IOException ignored) { }
+        }
+        int keys = 0;
+        for (String part : prefs.getString(SwipeKeyboardService.PREF_TOUCH_MODEL, "").split(";")) {
+            String[] p = part.split(",");
+            try {
+                if (p.length == 4 && Integer.parseInt(p[3]) >= 5) keys++;
+            } catch (NumberFormatException ignored) { }
+        }
+        int kept = prefs.getInt(SwipeKeyboardService.PREF_FIXES_KEPT, 0);
+        int undone = prefs.getInt(SwipeKeyboardService.PREF_FIXES_UNDONE, 0);
+        personal.setText("How well it knows you:\n"
+                + "• " + words + " of your words and " + pairs + " word pairs learned\n"
+                + "• " + keys + " of 26 letter keys tuned to where your fingers land\n"
+                + "• Autocorrect: " + kept + " fixes kept, " + undone + " undone"
+                + (undone > 0 ? " (it gets more careful when you undo)" : ""));
+    }
+
+    private TextView label(String s) {
+        TextView t = text(s, 15);
+        t.setTextColor(0xFFDDDDDD);
+        t.setPadding(0, px(10), 0, px(4));
+        return t;
+    }
+
+    /** Three-way choice saved as 0/1/2 under {@code key} (default 1). */
+    private android.widget.RadioGroup choice(String key, String... options) {
+        android.widget.RadioGroup g = new android.widget.RadioGroup(this);
+        g.setOrientation(LinearLayout.HORIZONTAL);
+        int current = prefs.getInt(key, 1);
+        for (int i = 0; i < options.length; i++) {
+            android.widget.RadioButton b = new android.widget.RadioButton(this);
+            b.setText(options[i]);
+            b.setTextColor(Color.WHITE);
+            b.setId(View.generateViewId());
+            g.addView(b, new android.widget.RadioGroup.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            if (i == current) b.setChecked(true);
+            final int value = i;
+            b.setOnCheckedChangeListener((btn, on) -> { if (on) prefs.edit().putInt(key, value).apply(); });
+        }
+        return g;
     }
 
     @Override

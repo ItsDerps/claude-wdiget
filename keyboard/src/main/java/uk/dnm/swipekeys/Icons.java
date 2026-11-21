@@ -151,4 +151,17 @@ final class Icons {
         c.drawLine(cx, cy, cx, cy - s * 0.3f, p);
         c.drawLine(cx, cy, cx + s * 0.22f, cy + s * 0.1f, p);
     }
+
+    /** An eye; crossed out when {@code off}. Keyboard memory on/off. */
+    static void eye(Canvas c, Paint p, float cx, float cy, float s, boolean off) {
+        float w = s / 2, h = s * 0.32f;
+        path.reset();
+        path.moveTo(cx - w, cy);
+        path.quadTo(cx, cy - h * 2, cx + w, cy);
+        path.quadTo(cx, cy + h * 2, cx - w, cy);
+        path.close();
+        c.drawPath(path, p);
+        c.drawCircle(cx, cy, s * 0.15f, p);
+        if (off) c.drawLine(cx - w * 0.85f, cy + w * 0.85f, cx + w * 0.85f, cy - w * 0.85f, p);
+    }
 }

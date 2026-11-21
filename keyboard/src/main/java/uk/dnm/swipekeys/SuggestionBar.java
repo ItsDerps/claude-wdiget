@@ -29,8 +29,8 @@ public class SuggestionBar extends View {
         void onMic();
     }
 
-    static final int TOOL_CLOSE = -1, TOOL_EMOJI = 0, TOOL_NOTES = 1, TOOL_ONE_HAND = 2, TOOL_SETTINGS = 3;
-    private static final int TOOL_COUNT = 4;
+    static final int TOOL_CLOSE = -1, TOOL_EMOJI = 0, TOOL_NOTES = 1, TOOL_ONE_HAND = 2, TOOL_MEMORY = 3, TOOL_SETTINGS = 4;
+    private static final int TOOL_COUNT = 5;
 
     // Touch targets
     private static final int HIT_NONE = -1, HIT_TOOLS = 100, HIT_MIC = 101, HIT_TOOL0 = 200;
@@ -39,6 +39,7 @@ public class SuggestionBar extends View {
     private final String[] slots = new String[3]; // left, middle, right
     private boolean toolsOpen;
     private boolean highlightBest;
+    private boolean memoryOn = true;
     private boolean listening;
     private String listeningText = "";
     private int highlightTool = -1;               // a tool whose panel is open
@@ -86,6 +87,11 @@ public class SuggestionBar extends View {
     public void setActiveTool(int tool) {
         highlightTool = tool;
         if (tool >= 0) toolsOpen = true;
+        invalidate();
+    }
+
+    public void setMemory(boolean on) {
+        memoryOn = on;
         invalidate();
     }
 
@@ -179,6 +185,10 @@ public class SuggestionBar extends View {
                     case TOOL_EMOJI: Icons.smiley(c, icon, ccx, cy, dp(20)); break;
                     case TOOL_NOTES: Icons.notes(c, icon, ccx, cy, dp(20)); break;
                     case TOOL_ONE_HAND: Icons.oneHand(c, icon, ccx, cy, dp(22)); break;
+                    case TOOL_MEMORY:
+                        if (!memoryOn) Icons.stroke(icon, 0xFFE5484D, dp(1.7f));
+                        Icons.eye(c, icon, ccx, cy, dp(22), !memoryOn);
+                        break;
                     default: Icons.sliders(c, icon, ccx, cy, dp(20)); break;
                 }
             }

@@ -45,6 +45,7 @@ public class EmojiPanel extends LinearLayout {
     private final List<String[]> sections = new ArrayList<>();
     private String[][] categories; // filtered to what this phone can draw
     private final List<String> recent = new ArrayList<>();
+    private boolean rememberRecents = true;
 
     private int colBg, colText, colDim, colPressed, colBar;
 
@@ -68,6 +69,9 @@ public class EmojiPanel extends LinearLayout {
     }
 
     public void setListener(Listener l) { listener = l; }
+
+    /** With keyboard memory off, picked emoji aren't saved as recents. */
+    public void setRememberRecents(boolean on) { rememberRecents = on; }
 
     /** Call when the panel is shown, so recents are fresh. */
     public void refresh() {
@@ -105,6 +109,7 @@ public class EmojiPanel extends LinearLayout {
     }
 
     private void remember(String e) {
+        if (!rememberRecents) return;
         recent.remove(e);
         recent.add(0, e);
         while (recent.size() > MAX_RECENT) recent.remove(recent.size() - 1);

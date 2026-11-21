@@ -39,6 +39,13 @@ public class SwipeKeyboardService extends InputMethodService
     static final String PREF_ONE_HAND = "one_hand";
     static final String PREF_AUTOCORRECT = "autocorrect";
     static final String PREF_CLEAR_LEARNED = "clear_learned";
+    static final String PREF_MEMORY = "memory";
+    static final String PREF_TOUCH_MODEL = "touch_model";
+    static final String PREF_HEIGHT = "key_height";
+    static final String PREF_FLICK = "flick_distance";
+    static final String PREF_VIBRATE = "vibrate";
+    static final String PREF_FIXES_KEPT = "fixes_kept";
+    static final String PREF_FIXES_UNDONE = "fixes_undone";
 
     private static final String SMART_PUNCT = ".,!?;:";
     private static final int PANEL_NONE = 0, PANEL_EMOJI = 1, PANEL_NOTES = 2;
@@ -63,6 +70,8 @@ public class SwipeKeyboardService extends InputMethodService
     private boolean secret;      // password field
     private boolean autoSpace;   // the last thing we did was add a space after a suggestion
     private boolean autocorrect; // fix typos when a word is finished
+    private boolean memory;      // keyboard memory: learn and save anything at all
+    private boolean noLearnHere; // this app asked for no personalised learning (incognito)
 
     // The last autocorrection, so backspace can undo it
     private String corrOriginal, corrFixed, corrSep, corrPrev;
@@ -83,10 +92,59 @@ public class SwipeKeyboardService extends InputMethodService
         glide = new GlideDecoder(predictor);
         clipboard = getSystemService(ClipboardManager.class);
         if (clipboard != null) clipboard.addPrimaryClipChangedListener(clipListener);
+        memory = prefs.getBoolean(PREF_MEMORY, true);
+        prefs.registerOnSharedPreferenceChangeListener(prefsListener);
+    }
+
+    // React straight away to changes made in the app (memory switch, "delete everything")
+    private final SharedPreferences.OnSharedPreferenceChangeListener prefsListener = (sp, key) -> {
+        if (PREF_CLEAR_LEARNED.equals(key) && sp.getBoolean(PREF_CLEAR_LEARNED, false)) {
+            forgetEverything();
+        } else if (PREF_MEMORY.equals(key)) {
+            setMemory(sp.getBoolean(PREF_MEMORY, true), false);
+        }
+    };
+
+    private void forgetEverything() {
+        predictor.clearLearned();
+        rejected.clear();
+        clips.clear();
+        if (view != null) view.loadTouchModel("");
+        prefs.edit().remove(PREF_CLEAR_LEARNED).remove(PREF_TOUCH_MODEL).remove(PREF_FIXES_KEPT)
+                .remove(PREF_FIXES_UNDONE).remove("recent_emoji").apply();
+        predictor.tuneAutocorrect(0, 0);
+    }
+
+    private void setMemory(boolean on, boolean fromKeyboard) {
+        if (on == memory) return;
+        memory = on;
+        if (fromKeyboard) prefs.edit().putBoolean(PREF_MEMORY, on).apply();
+        if (!on) clips.clear();
+        applyMemory();
+        if (bar != null) bar.setMemory(on);
+        if (fromKeyboard) {
+            Toast.makeText(this, on ? "Keyboard memory on" : "Keyboard memory off — nothing new is saved",
+                    Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /** Apply the memory switch to everything that learns or remembers. */
+    private void applyMemory() {
+        learn = predict && memory && !noLearnHere;
+        if (view != null) view.setLearnTouches(memory && !noLearnHere && !secret);
+        if (emojiPanel != null) emojiPanel.setRememberRecents(memory);
+    }
+
+    private void saveTouchModel() {
+        if (view != null && view.touchModelDirty() && memory) {
+            prefs.edit().putString(PREF_TOUCH_MODEL, view.saveTouchModel()).apply();
+        }
     }
 
     @Override
     public void onDestroy() {
+        prefs.unregisterOnSharedPreferenceChangeListener(prefsListener);
+        saveTouchModel();
         if (predictor != null) predictor.saveIfDirty();
         if (clipboard != null) clipboard.removePrimaryClipChangedListener(clipListener);
         if (recognizer != null) recognizer.destroy();
@@ -113,6 +171,8 @@ public class SwipeKeyboardService extends InputMethodService
         emojiPanel = null;
         notesPanel = null;
         panel = PANEL_NONE;
+        view.loadTouchModel(prefs.getString(PREF_TOUCH_MODEL, ""));
+        bar.setMemory(memory);
         root.addView(bar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         root.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         return root;
@@ -136,14 +196,12 @@ public class SwipeKeyboardService extends InputMethodService
                 || var == InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
                 || var == InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS;
         predict = cls == InputType.TYPE_CLASS_TEXT && !secret && !address;
-        learn = predict && (info.imeOptions & EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING) == 0;
+        noLearnHere = (info.imeOptions & EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING) != 0;
         autocorrect = predict && prefs.getBoolean(PREF_AUTOCORRECT, true)
                 && (info.inputType & InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS) == 0;
-        if (prefs.getBoolean(PREF_CLEAR_LEARNED, false)) {
-            predictor.clearLearned();
-            rejected.clear();
-            prefs.edit().remove(PREF_CLEAR_LEARNED).apply();
-        }
+        if (prefs.getBoolean(PREF_CLEAR_LEARNED, false)) forgetEverything();
+        memory = prefs.getBoolean(PREF_MEMORY, true);
+        predictor.tuneAutocorrect(prefs.getInt(PREF_FIXES_KEPT, 0), prefs.getInt(PREF_FIXES_UNDONE, 0));
         clearCorrection();
         autoSpace = false;
         clearGlide();
@@ -152,7 +210,10 @@ public class SwipeKeyboardService extends InputMethodService
             view.setEditorInfo(info);
             view.setGlideEnabled(predict && prefs.getBoolean(PREF_GLIDE, true));
             view.setOneHand(prefs.getInt(PREF_ONE_HAND, KeyboardView.HAND_OFF));
+            view.setFeel(prefs.getInt(PREF_HEIGHT, 1), prefs.getInt(PREF_FLICK, 1), prefs.getBoolean(PREF_VIBRATE, true));
         }
+        applyMemory();
+        if (bar != null) bar.setMemory(memory);
         updateShift();
         updateSuggestions();
     }
@@ -161,6 +222,7 @@ public class SwipeKeyboardService extends InputMethodService
     public void onFinishInputView(boolean finishingInput) {
         super.onFinishInputView(finishingInput);
         stopVoice(true);
+        saveTouchModel();
     }
 
     @Override
@@ -201,6 +263,7 @@ public class SwipeKeyboardService extends InputMethodService
         if (p == PANEL_EMOJI && emojiPanel == null) {
             emojiPanel = new EmojiPanel(this);
             emojiPanel.setListener(this);
+            emojiPanel.setRememberRecents(memory);
             content.addView(emojiPanel, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         }
         if (p == PANEL_NOTES && notesPanel == null) {
@@ -239,6 +302,9 @@ public class SwipeKeyboardService extends InputMethodService
                 onOneHandChanged(side);
                 break;
             }
+            case SuggestionBar.TOOL_MEMORY:
+                setMemory(!memory, true);
+                break;
             case SuggestionBar.TOOL_SETTINGS:
                 openApp(null);
                 break;
@@ -314,7 +380,7 @@ public class SwipeKeyboardService extends InputMethodService
     }
 
     private void captureClip() {
-        if (clipboard == null) return;
+        if (clipboard == null || !memory) return;
         try {
             ClipData clip = clipboard.getPrimaryClip();
             if (clip == null || clip.getItemCount() == 0) return;
@@ -392,6 +458,11 @@ public class SwipeKeyboardService extends InputMethodService
         } else {
             bar.setSuggestions(list, false);
         }
+    }
+
+    private void countFix(String key) {
+        if (!memory) return;
+        prefs.edit().putInt(key, prefs.getInt(key, 0) + 1).apply();
     }
 
     private void clearCorrection() {
@@ -628,6 +699,7 @@ public class SwipeKeyboardService extends InputMethodService
             corrFixed = corr[1];
             corrPrev = corr[2];
             corrSep = text;
+            countFix(PREF_FIXES_KEPT);
         }
         updateShift();
     }
@@ -647,6 +719,10 @@ public class SwipeKeyboardService extends InputMethodService
                 ic.commitText(corrOriginal + corrSep, 1);
                 ic.endBatchEdit();
                 rejected.add(corrOriginal.toLowerCase());
+                countFix(PREF_FIXES_UNDONE);
+                // An undo also cancels the "kept" count from when the fix was made
+                if (memory) prefs.edit().putInt(PREF_FIXES_KEPT, Math.max(0, prefs.getInt(PREF_FIXES_KEPT, 0) - 1)).apply();
+                predictor.tuneAutocorrect(prefs.getInt(PREF_FIXES_KEPT, 0), prefs.getInt(PREF_FIXES_UNDONE, 0));
                 if (learn) predictor.markKnown(corrPrev, corrOriginal);
                 clearCorrection();
                 return;

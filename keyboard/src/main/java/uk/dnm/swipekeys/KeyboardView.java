@@ -109,6 +109,21 @@ public class KeyboardView extends View {
     private boolean glideEnabled = true;
     private int oneHand = HAND_OFF;
 
+    // Feel settings
+    private float rowDp = 58;          // key row height in portrait
+    private float flickDp = 26;        // how far to pull down for the second character
+    private boolean haptics = true;
+
+    // Personal touch model: where this person actually taps each letter, relative to the key centre,
+    // in key units. Learned from taps that weren't immediately deleted.
+    private static final int TOUCH_MIN_SAMPLES = 5;
+    private final float[] tapDx = new float[26], tapDy = new float[26];
+    private final int[] tapN = new int[26];
+    private boolean learnTouches = true;
+    private boolean touchDirty;
+    private int pendingLetter = -1;    // last tap, kept until we know it wasn't a mistake
+    private float pendingDx, pendingDy;
+
     // Letter key centres (a..z) and key cell size, for the swipe-to-write decoder
     private final float[] letterX = new float[26], letterY = new float[26];
     private float unitW, rowH;
@@ -203,6 +218,81 @@ public class KeyboardView extends View {
 
     public void setGlideEnabled(boolean on) { glideEnabled = on; }
 
+    /** @param height 0 small, 1 normal, 2 large. @param flick 0 short, 1 normal, 2 long. */
+    public void setFeel(int height, int flick, boolean vibrate) {
+        float r = height == 0 ? 52 : height == 2 ? 64 : 58;
+        flickDp = flick == 0 ? 18 : flick == 2 ? 36 : 26;
+        haptics = vibrate;
+        if (r != rowDp) {
+            rowDp = r;
+            requestLayout();
+        }
+    }
+
+    public void setLearnTouches(boolean on) {
+        learnTouches = on;
+        if (!on) pendingLetter = -1;
+    }
+
+    /** "letter,dx,dy,n;..." */
+    public String saveTouchModel() {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 26; i++) {
+            if (tapN[i] == 0) continue;
+            sb.append(i).append(',').append(tapDx[i]).append(',').append(tapDy[i]).append(',').append(tapN[i]).append(';');
+        }
+        touchDirty = false;
+        return sb.toString();
+    }
+
+    public void loadTouchModel(String s) {
+        java.util.Arrays.fill(tapDx, 0);
+        java.util.Arrays.fill(tapDy, 0);
+        java.util.Arrays.fill(tapN, 0);
+        pendingLetter = -1;
+        touchDirty = false;
+        if (s == null) return;
+        for (String part : s.split(";")) {
+            String[] f = part.split(",");
+            if (f.length != 4) continue;
+            try {
+                int i = Integer.parseInt(f[0]);
+                if (i < 0 || i >= 26) continue;
+                tapDx[i] = Float.parseFloat(f[1]);
+                tapDy[i] = Float.parseFloat(f[2]);
+                tapN[i] = Integer.parseInt(f[3]);
+            } catch (NumberFormatException ignored) { }
+        }
+    }
+
+    public boolean touchModelDirty() { return touchDirty; }
+
+    /** How many letters have enough taps to be personalised. */
+    public int personalisedKeys() {
+        int n = 0;
+        for (int c : tapN) if (c >= TOUCH_MIN_SAMPLES) n++;
+        return n;
+    }
+
+    private void confirmPendingTap() {
+        if (pendingLetter < 0) return;
+        int i = pendingLetter;
+        pendingLetter = -1;
+        if (!learnTouches) return;
+        int n = Math.min(tapN[i], 60);
+        float w = 1f / (n + 1); // running average that slowly follows changes
+        tapDx[i] = clamp(tapDx[i] + (pendingDx - tapDx[i]) * w, -0.4f, 0.4f);
+        tapDy[i] = clamp(tapDy[i] + (pendingDy - tapDy[i]) * w, -0.4f, 0.4f);
+        tapN[i] = Math.min(tapN[i] + 1, 10000);
+        touchDirty = true;
+    }
+
+    private static float clamp(float v, float lo, float hi) { return Math.max(lo, Math.min(hi, v)); }
+
+    private void haptic(int type) {
+        if (haptics) performHapticFeedback(type);
+    }
+
     public void setOneHand(int side) {
         if (side == oneHand) return;
         oneHand = side;
@@ -212,8 +302,18 @@ public class KeyboardView extends View {
 
     public int getOneHand() { return oneHand; }
 
-    float[] letterX() { return letterX; }
-    float[] letterY() { return letterY; }
+    /** Letter centres for swipe-to-write, shifted to where this person usually touches. */
+    float[] letterX() {
+        float[] out = letterX.clone();
+        for (int i = 0; i < 26; i++) if (tapN[i] >= TOUCH_MIN_SAMPLES) out[i] += tapDx[i] * unitW;
+        return out;
+    }
+
+    float[] letterY() {
+        float[] out = letterY.clone();
+        for (int i = 0; i < 26; i++) if (tapN[i] >= TOUCH_MIN_SAMPLES) out[i] += tapDy[i] * rowH;
+        return out;
+    }
     float keyWidth() { return unitW; }
     float keyHeight() { return rowH; }
 
@@ -291,7 +391,7 @@ public class KeyboardView extends View {
         return getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
     }
 
-    private float rowHeight() { return dp(isLandscape() ? 46 : 58); }
+    private float rowHeight() { return dp(isLandscape() ? rowDp - 12 : rowDp); }
 
     @Override
     protected void onMeasure(int widthSpec, int heightSpec) {
@@ -365,6 +465,40 @@ public class KeyboardView extends View {
     }
 
     private Key findKey(float x, float y) {
+        Key k = plainKey(x, y);
+        if (k == null || k.type != CHAR || mode != MODE_ALPHA || !isLetterKey(k)) return k;
+        // Among nearby letters, pick the one whose personal "sweet spot" is closest
+        Key best = k;
+        float bestD = adjustedDistance(k, x, y);
+        for (List<Key> row : alphaRows) {
+            for (Key o : row) {
+                if (o == k || o.type != CHAR || !isLetterKey(o)) continue;
+                if (Math.abs(o.rect.centerX() - x) > unitW * 1.6f || Math.abs(o.rect.centerY() - y) > rowH * 1.6f) continue;
+                float d = adjustedDistance(o, x, y);
+                if (d < bestD) { bestD = d; best = o; }
+            }
+        }
+        return best;
+    }
+
+    private static boolean isLetterKey(Key k) {
+        char c = k.main.charAt(0);
+        return c >= 'a' && c <= 'z';
+    }
+
+    private float adjustedDistance(Key k, float x, float y) {
+        int i = k.main.charAt(0) - 'a';
+        float cx = k.rect.centerX(), cy = k.rect.centerY();
+        if (tapN[i] >= TOUCH_MIN_SAMPLES) {
+            cx += tapDx[i] * unitW;
+            cy += tapDy[i] * rowH;
+        }
+        float dx = (x - cx) / unitW, dy = (y - cy) / rowH;
+        // Keys aren't swapped unless the touch is clearly nearer the other key's sweet spot
+        return dx * dx + dy * dy * 1.3f;
+    }
+
+    private Key plainKey(float x, float y) {
         for (Key k : sideKeys) if (k.hit.contains(x, y)) return k;
         Key best = null;
         float bestD = Float.MAX_VALUE;
@@ -396,7 +530,7 @@ public class KeyboardView extends View {
                 t.downX = t.lastX = e.getX(idx);
                 t.downY = e.getY(idx);
                 touches.put(e.getPointerId(idx), t);
-                performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+                haptic(HapticFeedbackConstants.KEYBOARD_TAP);
                 onKeyDown(t);
                 invalidate();
                 break;
@@ -466,6 +600,7 @@ public class KeyboardView extends View {
     private void onKeyDown(Touch t) {
         switch (t.key.type) {
             case DELETE:
+                pendingLetter = -1; // the last tap was probably a mistake: don't learn from it
                 if (listener != null) listener.onDelete();
                 handler.removeCallbacks(deleteRepeat);
                 handler.postDelayed(deleteRepeat, 400);
@@ -503,10 +638,10 @@ public class KeyboardView extends View {
                 return;
             }
             if (k.alt != null) {
-                t.progress = Math.max(0f, Math.min(1f, dy / dp(26)));
+                t.progress = Math.max(0f, Math.min(1f, dy / dp(flickDp)));
                 if (t.progress >= FLICK_COMMIT && !t.flickTicked) {
                     t.flickTicked = true;
-                    performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK);
+                    haptic(HapticFeedbackConstants.CLOCK_TICK);
                 } else if (t.progress < FLICK_COMMIT && t.flickTicked) {
                     t.flickTicked = false;
                 }
@@ -536,12 +671,14 @@ public class KeyboardView extends View {
                 handler.removeCallbacks(spaceLongPress);
                 spaceTouch = null;
                 if (!t.cursorMode && !t.consumed && listener != null) {
+                    confirmPendingTap();
                     boolean backToLetters = mode != MODE_ALPHA && !symLocked && typedInSym;
                     listener.onText(" ");
                     if (backToLetters) setMode(MODE_ALPHA);
                 }
                 break;
             case ENTER:
+                confirmPendingTap();
                 if (listener != null) listener.onEnter();
                 break;
             case DELETE:
@@ -566,6 +703,7 @@ public class KeyboardView extends View {
     }
 
     private void finishGlide(Touch t) {
+        confirmPendingTap();
         trailX = java.util.Arrays.copyOf(t.gx, t.gn);
         trailY = java.util.Arrays.copyOf(t.gy, t.gn);
         trailN = t.gn;
@@ -579,6 +717,12 @@ public class KeyboardView extends View {
         Key k = t.key;
         boolean flicked = k.alt != null && t.progress >= FLICK_COMMIT;
         String s = flicked ? k.alt : displayMain(k);
+        confirmPendingTap();
+        if (!flicked && mode == MODE_ALPHA && isLetterKey(k) && !t.glide) {
+            pendingLetter = k.main.charAt(0) - 'a';
+            pendingDx = clamp((t.downX - k.rect.centerX()) / unitW, -0.6f, 0.6f);
+            pendingDy = clamp((t.downY - k.rect.centerY()) / rowH, -0.6f, 0.6f);
+        }
         if (mode == MODE_ALPHA && shift == SHIFT_ON) shift = SHIFT_OFF;
         if (mode != MODE_ALPHA) typedInSym = true;
         if (listener != null) listener.onText(s);
