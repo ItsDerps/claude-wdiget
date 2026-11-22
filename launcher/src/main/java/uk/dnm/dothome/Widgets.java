@@ -206,8 +206,8 @@ final class Widgets {
         boolean builtIn = w.startsWith("b:");
         if (builtIn) {
             GradientDrawable bg = new GradientDrawable();
-            bg.setColor(w.equals("b:torch") && TorchW.isOn() ? Ui.WHITE : Ui.SURFACE);
-            bg.setStroke(Ui.dpi(ctx, 1), 0xFF1F1F1F);
+            bg.setColor(w.equals("b:torch") && TorchW.isOn() ? fg(ctx) : card(ctx));
+            bg.setStroke(Ui.dpi(ctx, 1), Theme.get(ctx).surfaceLine);
             bg.setCornerRadius(Ui.dp(ctx, 24));
             clip.setBackground(bg);
         }
@@ -258,25 +258,199 @@ final class Widgets {
     void start() { try { host.startListening(); } catch (Exception ignored) { } }
     void stop() { try { host.stopListening(); } catch (Exception ignored) { } }
 
+    // ================================================================== widgets in the home grid
+
+    /** Built-in widgets that can refresh their data without being rebuilt. */
+    interface Live { void refresh(); }
+
+    /** A widget as a home grid cell: rounded, clipped, and draggable in edit mode. */
+    static final class WidgetCell extends FrameLayout implements Cell {
+        final String key;                 // "b:battery" or "a:<id>"
+        final View content;
+        private boolean ghost, target;
+        private final Paint line = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF box = new RectF();
+
+        WidgetCell(Context c, String key, View content) {
+            super(c);
+            this.key = key;
+            this.content = content;
+            setWillNotDraw(false);
+            setPadding(Ui.dpi(c, 5), Ui.dpi(c, 5), Ui.dpi(c, 5), Ui.dpi(c, 5));
+            FrameLayout clip = new FrameLayout(c);
+            if (key.startsWith("b:")) {
+                GradientDrawable bg = new GradientDrawable();
+                bg.setColor(key.equals("b:torch") && TorchW.isOn() ? fg(c) : card(c));
+                bg.setStroke(Ui.dpi(c, 1), Theme.get(c).surfaceLine);
+                bg.setCornerRadius(Ui.dp(c, 26));
+                clip.setBackground(bg);
+            }
+            clip.setOutlineProvider(new ViewOutlineProvider() {
+                @Override public void getOutline(View v, Outline o) {
+                    o.setRoundRect(0, 0, v.getWidth(), v.getHeight(), Ui.dp(c, 26));
+                }
+            });
+            clip.setClipToOutline(true);
+            clip.addView(content, new FrameLayout.LayoutParams(-1, -1));
+            addView(clip, new FrameLayout.LayoutParams(-1, -1));
+            line.setStyle(Paint.Style.STROKE);
+        }
+
+        @Override
+        protected void onLayout(boolean changed, int l, int t, int r, int b) {
+            super.onLayout(changed, l, t, r, b);
+            if (changed && content instanceof AppWidgetHostView) {
+                float d = getResources().getDisplayMetrics().density;
+                int wdp = (int) ((r - l) / d), hdp = (int) ((b - t) / d);
+                try {
+                    //noinspection deprecation
+                    ((AppWidgetHostView) content).updateAppWidgetSize(new Bundle(), wdp, hdp, wdp, hdp);
+                } catch (Exception ignored) { }
+            }
+        }
+
+        @Override
+        protected void dispatchDraw(Canvas c) {
+            float r = Ui.dp(getContext(), 26);
+            box.set(getPaddingLeft(), getPaddingTop(), getWidth() - getPaddingRight(), getHeight() - getPaddingBottom());
+            if (ghost) {
+                line.setPathEffect(new android.graphics.DashPathEffect(new float[]{Ui.dp(getContext(), 4), Ui.dp(getContext(), 4)}, 0));
+                line.setColor(target ? Ui.RED : Theme.get(getContext()).textFaint);
+                line.setStrokeWidth(Ui.dp(getContext(), 1.2f));
+                c.drawRoundRect(box, r, r, line);
+                line.setPathEffect(null);
+                return;
+            }
+            super.dispatchDraw(c);
+            if (target) {
+                line.setColor(Ui.RED);
+                line.setStrokeWidth(Ui.dp(getContext(), 2));
+                c.drawRoundRect(box, r, r, line);
+            }
+        }
+
+        @Override public boolean hasContent() { return true; }
+        @Override public void setGhost(boolean on) { ghost = on; invalidate(); }
+        @Override public void setDropTarget(boolean on, boolean makesStack) { target = on; invalidate(); }
+        @Override public RectF discBounds() { return new RectF(box); }
+    }
+
+    /** The widget as a home cell, or null if it can't be shown (e.g. its app was removed). */
+    View cell(String w) {
+        View v = make(w);
+        return v == null ? null : new WidgetCell(ctx, w, v);
+    }
+
+    static String name(Context c, String w) {
+        for (String[] b : BUILT_IN) if (w.equals("b:" + b[0])) return b[1];
+        if (w.startsWith("a:")) {
+            try {
+                AppWidgetProviderInfo info = AppWidgetManager.getInstance(c).getAppWidgetInfo(Integer.parseInt(w.substring(2)));
+                if (info != null) return info.loadLabel(c.getPackageManager());
+            } catch (Exception ignored) { }
+        }
+        return "Widget";
+    }
+
+    // ---- sizes, in grid cells (columns × rows)
+
+    private static final int CELL_DP = 80;
+
+    static List<int[]> sizes(Context c, String w) {
+        List<int[]> out = new ArrayList<>();
+        switch (w) {
+            case "b:battery": case "b:clock": case "b:torch": case "b:tiles":
+                out.add(new int[]{2, 2});
+                break;
+            case "b:next": case "b:music":
+                out.add(new int[]{4, 1});
+                out.add(new int[]{4, 2});
+                break;
+            case "b:weather":
+                out.add(new int[]{2, 2});
+                out.add(new int[]{4, 2});
+                break;
+            default:
+                AppWidgetProviderInfo info = null;
+                try { info = AppWidgetManager.getInstance(c).getAppWidgetInfo(Integer.parseInt(w.substring(2))); } catch (Exception ignored) { }
+                int[][] all = {{1, 1}, {2, 1}, {2, 2}, {4, 1}, {4, 2}, {4, 3}, {4, 4}};
+                if (info == null) { out.add(new int[]{4, 2}); break; }
+                float d = c.getResources().getDisplayMetrics().density;
+                int minW = (int) ((info.resizeMode & AppWidgetProviderInfo.RESIZE_HORIZONTAL) != 0 && info.minResizeWidth > 0 ? info.minResizeWidth : info.minWidth);
+                int minH = (int) ((info.resizeMode & AppWidgetProviderInfo.RESIZE_VERTICAL) != 0 && info.minResizeHeight > 0 ? info.minResizeHeight : info.minHeight);
+                int[] def = defaultSize(c, w);
+                for (int[] s : all) {
+                    boolean fitsW = s[0] * CELL_DP * d >= minW * 0.9f, fitsH = s[1] * CELL_DP * d >= minH * 0.9f;
+                    boolean canW = s[0] == def[0] || (info.resizeMode & AppWidgetProviderInfo.RESIZE_HORIZONTAL) != 0;
+                    boolean canH = s[1] == def[1] || (info.resizeMode & AppWidgetProviderInfo.RESIZE_VERTICAL) != 0;
+                    if (fitsW && fitsH && canW && canH) out.add(s);
+                }
+                if (out.isEmpty()) out.add(def);
+        }
+        return out;
+    }
+
+    static int[] defaultSize(Context c, String w) {
+        if (w.startsWith("b:")) return sizes(c, w).get(0);
+        try {
+            AppWidgetProviderInfo info = AppWidgetManager.getInstance(c).getAppWidgetInfo(Integer.parseInt(w.substring(2)));
+            if (info != null) {
+                float d = c.getResources().getDisplayMetrics().density;
+                int cw = (int) Math.ceil(info.minWidth / (CELL_DP * d)), ch = (int) Math.ceil(info.minHeight / (CELL_DP * d));
+                cw = cw <= 1 ? 1 : cw <= 2 ? 2 : 4;
+                return new int[]{cw, Math.max(1, Math.min(4, ch))};
+            }
+        } catch (Exception ignored) { }
+        return new int[]{4, 2};
+    }
+
+    static int[] size(Context c, String w) {
+        try {
+            org.json.JSONObject o = new org.json.JSONObject(Prefs.get(c).raw().getString("wsize", "{}"));
+            String v = o.optString(w, null);
+            if (v != null) {
+                String[] p = v.split("x");
+                return new int[]{Integer.parseInt(p[0]), Integer.parseInt(p[1])};
+            }
+        } catch (Exception ignored) { }
+        return defaultSize(c, w);
+    }
+
+    static void setSize(Context c, String w, int[] s) {
+        try {
+            org.json.JSONObject o = new org.json.JSONObject(Prefs.get(c).raw().getString("wsize", "{}"));
+            o.put(w, s[0] + "x" + s[1]);
+            Prefs.get(c).raw().edit().putString("wsize", o.toString()).apply();
+        } catch (Exception ignored) { }
+    }
+
+    /** Free an app widget's id when it's removed from home. */
+    void release(String w) {
+        if (w.startsWith("a:")) {
+            try { host.deleteAppWidgetId(Integer.parseInt(w.substring(2))); } catch (Exception ignored) { }
+        }
+    }
+
     // ================================================================== built-in widgets
 
     private static Paint paint() { return new Paint(Paint.ANTI_ALIAS_FLAG); }
 
     /** A ring of 24 dots for the phone battery. */
-    static final class BatteryW extends View {
+    static final class BatteryW extends View implements Live {
         private final Paint p = paint(), t = paint(), l = paint();
         BatteryW(Context c) {
             super(c);
             t.setTypeface(Ui.dots(c));
             t.setTextAlign(Paint.Align.CENTER);
-            t.setColor(Ui.WHITE);
+            t.setColor(fg(c));
             l.setTypeface(Ui.mono(c));
             l.setTextAlign(Paint.Align.CENTER);
-            l.setColor(0xFF888888);
+            l.setColor(sub(c));
             l.setTextSize(Ui.sp(c, 8.5f));
             l.setLetterSpacing(0.16f);
             setOnClickListener(v -> start(c, new Intent(Intent.ACTION_POWER_USAGE_SUMMARY)));
         }
+        @Override public void refresh() { invalidate(); }
         @Override protected void onDraw(Canvas c) {
             Intent b = getContext().registerReceiver(null, new android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED));
             int level = 0;
@@ -291,7 +465,7 @@ final class Widgets {
             int n = 24, lit = Math.round(level / 100f * n);
             for (int i = 0; i < n; i++) {
                 double a = -Math.PI / 2 + i * Math.PI * 2 / n;
-                p.setColor(i < lit ? (i == lit - 1 && (charging || level <= 15) ? Ui.RED : Ui.WHITE) : 0xFF2A2A2A);
+                p.setColor(i < lit ? (i == lit - 1 && (charging || level <= 15) ? Ui.RED : fg(getContext())) : off(getContext()));
                 c.drawCircle(cx + (float) Math.cos(a) * r, cy + (float) Math.sin(a) * r, Ui.dp(getContext(), 2.2f), p);
             }
             t.setTextSize(r * 0.75f);
@@ -314,13 +488,13 @@ final class Widgets {
             for (int i = 0; i < 60; i++) {
                 double a = -Math.PI / 2 + i * Math.PI * 2 / 60;
                 boolean big = i % 5 == 0;
-                p.setColor(i == sec ? Ui.RED : big ? Ui.WHITE : 0xFF3A3A3A);
+                p.setColor(i == sec ? Ui.RED : big ? fg(getContext()) : off(getContext()));
                 c.drawCircle(cx + (float) Math.cos(a) * R, cy + (float) Math.sin(a) * R, Ui.dp(getContext(), big ? 2 : 1), p);
             }
             float min = now.get(Calendar.MINUTE) + sec / 60f;
             float hour = now.get(Calendar.HOUR) + min / 60f;
-            hand(c, cx, cy, hour / 12f, R * 0.5f, 5, Ui.WHITE, 2.2f);
-            hand(c, cx, cy, min / 60f, R * 0.78f, 7, 0xFFBBBBBB, 1.8f);
+            hand(c, cx, cy, hour / 12f, R * 0.5f, 5, fg(getContext()), 2.2f);
+            hand(c, cx, cy, min / 60f, R * 0.78f, 7, sub(getContext()), 1.8f);
             p.setColor(Ui.RED);
             c.drawCircle(cx, cy, Ui.dp(getContext(), 2.4f), p);
             postInvalidateDelayed(1000 - (System.currentTimeMillis() % 1000));
@@ -356,7 +530,7 @@ final class Widgets {
                             Ui.tap(v);
                             View parent = (View) getParent();
                             GradientDrawable bg = (GradientDrawable) parent.getBackground();
-                            if (bg != null) bg.setColor(on ? Ui.WHITE : Ui.SURFACE);
+                            if (bg != null) bg.setColor(on ? fg(c) : card(c));
                             invalidate();
                             break;
                         }
@@ -366,7 +540,7 @@ final class Widgets {
         }
         @Override protected void onDraw(Canvas c) {
             float cx = getWidth() / 2f, cy = getHeight() / 2f, u = Ui.dp(getContext(), 1.3f);
-            p.setColor(on ? Ui.BLACK : Ui.WHITE);
+            p.setColor(on ? card(getContext()) : fg(getContext()));
             p.setStrokeWidth(Ui.dp(getContext(), 2));
             android.graphics.Path path = new android.graphics.Path();
             path.moveTo(cx - 8 * u, cy - 16 * u); path.lineTo(cx + 8 * u, cy - 16 * u); path.lineTo(cx + 8 * u, cy - 8 * u);
@@ -402,7 +576,7 @@ final class Widgets {
                 try {
                     boolean nowRing = am.getRingerMode() != android.media.AudioManager.RINGER_MODE_NORMAL;
                     am.setRingerMode(nowRing ? android.media.AudioManager.RINGER_MODE_NORMAL : android.media.AudioManager.RINGER_MODE_VIBRATE);
-                    ((android.widget.ImageView) v).setImageDrawable(new Glyph(nowRing ? Glyph.BELL : Glyph.VIBRATE, Ui.dpi(c, 22), nowRing ? Ui.BLACK : Ui.WHITE));
+                    ((android.widget.ImageView) v).setImageDrawable(new Glyph(nowRing ? Glyph.BELL : Glyph.VIBRATE, Ui.dpi(c, 22), nowRing ? card(c) : fg(c)));
                     setOn.accept(nowRing);
                 } catch (Exception e) {
                     start(c, new Intent(android.provider.Settings.ACTION_SOUND_SETTINGS));
@@ -420,12 +594,12 @@ final class Widgets {
             GradientDrawable bg = new GradientDrawable();
             bg.setShape(GradientDrawable.OVAL);
             java.util.function.Consumer<Boolean> setOn = o -> {
-                bg.setColor(o ? Ui.WHITE : 0xFF222222);
+                bg.setColor(o ? fg(c) : off(c));
                 Drawable d = iv.getDrawable();
-                if (d instanceof Glyph) iv.setImageDrawable(new Glyph(((Glyph) d).kind(), Ui.dpi(c, 22), o ? Ui.BLACK : Ui.WHITE));
+                if (d instanceof Glyph) iv.setImageDrawable(new Glyph(((Glyph) d).kind(), Ui.dpi(c, 22), o ? card(c) : fg(c)));
             };
-            iv.setImageDrawable(new Glyph(glyph, Ui.dpi(c, 22), on ? Ui.BLACK : Ui.WHITE));
-            bg.setColor(on ? Ui.WHITE : 0xFF222222);
+            iv.setImageDrawable(new Glyph(glyph, Ui.dpi(c, 22), on ? card(c) : fg(c)));
+            bg.setColor(on ? fg(c) : off(c));
             iv.setBackground(bg);
             iv.setOnClickListener(v -> {
                 Ui.tap(v);
@@ -481,8 +655,27 @@ final class Widgets {
     }
 
     /** The next event, with a one-tap open. */
-    static final class NextW extends LinearLayout {
+    static final class NextW extends LinearLayout implements Live {
         private long eventId = -1;
+        private TextView titleV, subV;
+        @Override public void refresh() { if (titleV != null) load(getContext()); }
+
+        private void load(Context c) {
+            new Thread(() -> {
+                String[] r = next(c);
+                post(() -> {
+                    if (r != null) {
+                        titleV.setText(r[0]);
+                        subV.setText(r[1]);
+                        eventId = Long.parseLong(r[2]);
+                    } else {
+                        titleV.setText("Nothing else today");
+                        subV.setText("Enjoy the quiet");
+                        eventId = -1;
+                    }
+                });
+            }).start();
+        }
         NextW(Context c) {
             super(c);
             setGravity(Gravity.CENTER_VERTICAL);
@@ -493,10 +686,10 @@ final class Widgets {
             day.setGravity(Gravity.CENTER);
             day.setTypeface(Ui.dots(c));
             day.setTextSize(17);
-            day.setTextColor(Ui.WHITE);
+            day.setTextColor(fg(c));
             day.setLineSpacing(0, 0.9f);
             GradientDrawable db = new GradientDrawable();
-            db.setColor(0xFF1C1C1C);
+            db.setColor(off(c));
             db.setCornerRadius(Ui.dp(c, 14));
             day.setBackground(db);
             addView(day, new LayoutParams(Ui.dpi(c, 54), Ui.dpi(c, 54)));
@@ -505,13 +698,13 @@ final class Widgets {
             text.setPadding(Ui.dpi(c, 14), 0, 0, 0);
             TextView k = mono(c, "NEXT");
             TextView title = new TextView(c);
-            title.setTextColor(Ui.WHITE);
+            title.setTextColor(fg(c));
             title.setTextSize(15);
             title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
             title.setSingleLine(true);
             title.setEllipsize(android.text.TextUtils.TruncateAt.END);
             TextView sub = new TextView(c);
-            sub.setTextColor(0xFF999999);
+            sub.setTextColor(sub(c));
             sub.setTextSize(11.5f);
             sub.setSingleLine(true);
             text.addView(k);
@@ -526,16 +719,9 @@ final class Widgets {
             }
             title.setText("Nothing else today");
             sub.setText("Enjoy the quiet");
-            new Thread(() -> {
-                String[] r = next(c);
-                post(() -> {
-                    if (r != null) {
-                        title.setText(r[0]);
-                        sub.setText(r[1]);
-                        eventId = Long.parseLong(r[2]);
-                    }
-                });
-            }).start();
+            titleV = title;
+            subV = sub;
+            load(c);
             setOnClickListener(v -> {
                 if (eventId >= 0) start(c, new Intent(Intent.ACTION_VIEW, ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, eventId)));
                 else {
@@ -600,13 +786,13 @@ final class Widgets {
             text.setOrientation(VERTICAL);
             text.setPadding(Ui.dpi(c, 12), 0, Ui.dpi(c, 8), 0);
             title = new TextView(c);
-            title.setTextColor(Ui.WHITE);
+            title.setTextColor(fg(c));
             title.setTextSize(14);
             title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
             title.setSingleLine(true);
             title.setEllipsize(android.text.TextUtils.TruncateAt.END);
             artist = new TextView(c);
-            artist.setTextColor(0xFF999999);
+            artist.setTextColor(sub(c));
             artist.setTextSize(11.5f);
             artist.setSingleLine(true);
             artist.setEllipsize(android.text.TextUtils.TruncateAt.END);
@@ -617,12 +803,12 @@ final class Widgets {
             blp.topMargin = Ui.dpi(c, 6);
             text.addView(bar, blp);
             addView(text, new LayoutParams(0, -2, 1f));
-            playG = new Glyph(Glyph.PLAY, Ui.dpi(c, 18), Ui.BLACK);
-            pauseG = new Glyph(Glyph.PAUSE, Ui.dpi(c, 18), Ui.BLACK);
-            moreG = new Glyph(Glyph.CHEVRON, Ui.dpi(c, 18), Ui.BLACK);
-            android.widget.ImageView prev = button(c, new Glyph(Glyph.PREV, Ui.dpi(c, 14), 0xFF999999), false);
+            playG = new Glyph(Glyph.PLAY, Ui.dpi(c, 18), card(c));
+            pauseG = new Glyph(Glyph.PAUSE, Ui.dpi(c, 18), card(c));
+            moreG = new Glyph(Glyph.CHEVRON, Ui.dpi(c, 18), card(c));
+            android.widget.ImageView prev = button(c, new Glyph(Glyph.PREV, Ui.dpi(c, 14), sub(c)), false);
             play = button(c, playG, true);
-            android.widget.ImageView nxt = button(c, new Glyph(Glyph.NEXT, Ui.dpi(c, 14), 0xFF999999), false);
+            android.widget.ImageView nxt = button(c, new Glyph(Glyph.NEXT, Ui.dpi(c, 14), sub(c)), false);
             addView(prev);
             addView(play);
             addView(nxt);
@@ -649,7 +835,7 @@ final class Widgets {
             if (big) {
                 GradientDrawable d = new GradientDrawable();
                 d.setShape(GradientDrawable.OVAL);
-                d.setColor(Ui.WHITE);
+                d.setColor(fg(c));
                 t.setBackground(d);
             }
             int s2 = Ui.dpi(c, big ? 40 : 32);
@@ -722,7 +908,7 @@ final class Widgets {
             int n = (int) (getWidth() / step);
             int at = Math.round(v * (n - 1));
             for (int i = 0; i < n; i++) {
-                p.setColor(v > 0 && i == at ? Ui.RED : i < at ? Ui.WHITE : 0xFF333333);
+                p.setColor(v > 0 && i == at ? Ui.RED : i < at ? fg(getContext()) : off(getContext()));
                 c.drawCircle(i * step + step / 2, getHeight() / 2f, Ui.dp(getContext(), 1.5f), p);
             }
         }
@@ -734,7 +920,7 @@ final class Widgets {
         ArtDots(Context c) {
             super(c);
             GradientDrawable d = new GradientDrawable();
-            d.setColor(0xFF1C1C1C);
+            d.setColor(off(c));
             d.setCornerRadius(Ui.dp(c, 14));
             setBackground(d);
         }
@@ -750,16 +936,16 @@ final class Widgets {
     }
 
     /** Temperature in dots, the condition, and the next hours as bars (now in red). */
-    static final class WeatherW extends View {
+    static final class WeatherW extends View implements Live {
         private final Paint p = paint(), t = paint(), s = paint(), k = paint();
         WeatherW(Context c) {
             super(c);
             t.setTypeface(Ui.dots(c));
-            t.setColor(Ui.WHITE);
-            s.setColor(0xFFAAAAAA);
+            t.setColor(fg(c));
+            s.setColor(sub(c));
             s.setTextSize(Ui.sp(c, 11.5f));
             k.setTypeface(Ui.mono(c));
-            k.setColor(0xFF888888);
+            k.setColor(sub(c));
             k.setTextSize(Ui.sp(c, 9));
             k.setLetterSpacing(0.16f);
             setOnClickListener(v -> {
@@ -767,16 +953,17 @@ final class Widgets {
                 else Weather.refresh(c, true, this::invalidate);
             });
         }
+        @Override public void refresh() { invalidate(); }
         @Override protected void onDraw(Canvas c) {
             Context ctx = getContext();
             float pad = Ui.dp(ctx, 16);
             Weather.Data d = Weather.enabled(ctx) ? Weather.cached(ctx) : null;
             if (d == null) {
                 c.drawText("WEATHER", pad, pad + Ui.sp(ctx, 9), k);
-                s.setColor(Ui.WHITE);
+                s.setColor(fg(ctx));
                 s.setTextSize(Ui.sp(ctx, 14));
                 c.drawText(Weather.enabled(ctx) ? "Getting the forecast…" : "Turn on weather in settings", pad, getHeight() / 2f + Ui.sp(ctx, 5), s);
-                s.setColor(0xFFAAAAAA);
+                s.setColor(sub(ctx));
                 s.setTextSize(Ui.sp(ctx, 11.5f));
                 return;
             }
@@ -795,7 +982,7 @@ final class Widgets {
                 for (int i = 0; i < d.hours.length; i++) {
                     float x = right - (d.hours.length - i) * (bw + gap) + gap;
                     float h = (float) (minH + (hi == lo ? 0.5 : (d.hours[i] - lo) / (hi - lo)) * (maxH - minH));
-                    p.setColor(i == 0 ? Ui.RED : 0xFF444444);
+                    p.setColor(i == 0 ? Ui.RED : off(ctx));
                     c.drawRoundRect(new RectF(x, bottom - h, x + bw, bottom), bw / 2, bw / 2, p);
                 }
             }
@@ -808,9 +995,15 @@ final class Widgets {
         t.setTypeface(Ui.mono(c));
         t.setTextSize(9);
         t.setLetterSpacing(0.16f);
-        t.setTextColor(0xFF888888);
+        t.setTextColor(sub(c));
         return t;
     }
+
+    // Theme colours for the built-in widgets
+    static int fg(Context c) { return Theme.get(c).text; }
+    static int sub(Context c) { return Theme.get(c).textMute; }
+    static int card(Context c) { return Theme.get(c).surface; }
+    static int off(Context c) { return Theme.get(c).light ? 0xFFE3E3DE : 0xFF262626; }
 
     static void start(Context c, Intent i) {
         try {

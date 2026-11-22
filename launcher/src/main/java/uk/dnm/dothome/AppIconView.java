@@ -182,6 +182,10 @@ public class AppIconView extends View implements Cell {
 
     @Override
     protected void onDraw(Canvas c) {
+        Theme th = Theme.get(getContext());
+        text.setColor(th.light ? 0xFF2A2A2A : 0xFFD0D0D0);
+        // Glyphs are drawn white; on Paper they're tinted black
+        bmp.setColorFilter(th.light ? new android.graphics.PorterDuffColorFilter(th.glyph, android.graphics.PorterDuff.Mode.SRC_IN) : null);
         float cx = getWidth() / 2f, top = top(), cy = top + disc / 2;
         long now = SystemClock.uptimeMillis();
         boolean anim = false;
@@ -194,7 +198,7 @@ public class AppIconView extends View implements Cell {
                 float r = disc / 2 + Ui.dp(getContext(), 7);
                 for (int i = 0; i < n; i++) {
                     double a = -Math.PI / 2 + i * Math.PI * 2 / n;
-                    fill.setColor(i / (float) n < t ? Ui.WHITE : 0xFF262626);
+                    fill.setColor(i / (float) n < t ? th.glow : th.iconRing);
                     c.drawCircle(cx + (float) Math.cos(a) * r, cy + (float) Math.sin(a) * r, Ui.dp(getContext(), 1.4f), fill);
                 }
             }
@@ -212,7 +216,7 @@ public class AppIconView extends View implements Cell {
                 for (int ring = 0; ring < 2; ring++) {
                     float r = Math.max(0, Ui.dp(getContext(), 6) + e * maxR - ring * Ui.dp(getContext(), 9));
                     int alpha = (int) (255 * Math.max(0, (1 - p) - ring * 0.25f));
-                    fill.setColor(Ui.WHITE);
+                    fill.setColor(th.glow);
                     fill.setAlpha(alpha);
                     int n = 16;
                     for (int i = 0; i < n; i++) {
@@ -229,7 +233,7 @@ public class AppIconView extends View implements Cell {
         if (placeholder || ghost) {
             stroke.setPathEffect(dash);
             stroke.setStrokeWidth(Ui.dp(getContext(), 1.2f));
-            stroke.setColor(dropTarget ? Ui.RED : 0xFF333333);
+            stroke.setColor(dropTarget ? Ui.RED : th.light ? 0xFFBDBDB8 : 0xFF333333);
             if (dropTarget) {
                 fill.setColor(0x26D71921);
                 c.drawCircle(cx, cy, disc / 2, fill);
@@ -247,9 +251,9 @@ public class AppIconView extends View implements Cell {
             fill.setColor(0x99000000);
             c.drawCircle(cx, cy + Ui.dp(getContext(), 6), disc / 2 + Ui.dp(getContext(), 4), fill);
         }
-        fill.setColor(lifted ? 0xFF222222 : Ui.ICON_BG);
+        fill.setColor(lifted ? (th.light ? 0xFFFFFFFF : 0xFF222222) : th.iconBg);
         c.drawCircle(cx, cy, disc / 2, fill);
-        stroke.setColor(lifted ? Ui.WHITE : 0xFF262626);
+        stroke.setColor(lifted ? th.text : th.iconRing);
         stroke.setStrokeWidth(Ui.dp(getContext(), lifted ? 2 : 1));
         c.drawCircle(cx, cy, disc / 2 - stroke.getStrokeWidth() / 2, stroke);
         if (app != null && app.icon != null) {
@@ -275,14 +279,14 @@ public class AppIconView extends View implements Cell {
             c.drawCircle(cx, cy, disc / 2 + Ui.dp(getContext(), 3), stroke);
         }
         if (app != null && app.work) {
-            fill.setColor(Ui.WHITE);
+            fill.setColor(th.text);
             c.drawCircle(cx + disc * 0.36f, cy + disc * 0.36f, Ui.dp(getContext(), 5), fill);
-            fill.setColor(Ui.BLACK);
+            fill.setColor(th.bg);
             c.drawCircle(cx + disc * 0.36f, cy + disc * 0.36f, Ui.dp(getContext(), 2.2f), fill);
         }
         if (badge) {
             float bx = cx + disc * 0.36f, by = cy - disc * 0.36f;
-            fill.setColor(Ui.BLACK);
+            fill.setColor(th.bg);
             c.drawCircle(bx, by, Ui.dp(getContext(), 6.5f), fill);
             fill.setColor(Ui.RED);
             c.drawCircle(bx, by, Ui.dp(getContext(), 4.5f), fill);

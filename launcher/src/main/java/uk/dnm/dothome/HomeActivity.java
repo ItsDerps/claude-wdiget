@@ -55,13 +55,13 @@ import java.util.Set;
 
 public class HomeActivity extends Activity
         implements HomeView.Host, DrawerView.Host, AppMenu.Actions, StackPanel.Host, Apps.Listener,
-        BigStackView.Listener, ArcDialView.Host {
+        BigStackView.Listener, QuickPanel.Host {
 
     private static final int REQ_BIND = 11, REQ_CONFIG = 12;
 
     private Root root;
     private DotGridView grid;
-    private ArcDialView dial;
+    private QuickPanel dial;
     private EdgeHandle edge;
     private AppIconView lastLaunched;
     private boolean returning;
@@ -127,11 +127,12 @@ public class HomeActivity extends Activity
         root.addView(grid, new FrameLayout.LayoutParams(-1, -1));
         root.addView(editFrame, new FrameLayout.LayoutParams(-1, -1));
         home.setBigListener(this);
+        home.setWidgets(widgets);
         root.addView(home, new FrameLayout.LayoutParams(-1, -1));
         root.addView(today, new FrameLayout.LayoutParams(-1, -1));
         root.addView(drawer, new FrameLayout.LayoutParams(-1, -1));
         buildEditChrome();
-        dial = new ArcDialView(this);
+        dial = new QuickPanel(this);
         dial.setHost(this);
         edge = new EdgeHandle(this, dial, () -> apps.visible());
         FrameLayout.LayoutParams elp = new FrameLayout.LayoutParams(Ui.dpi(this, 24), Ui.dpi(this, 200), Gravity.END | Gravity.CENTER_VERTICAL);
@@ -265,7 +266,7 @@ public class HomeActivity extends Activity
         super.onStop();
         widgets.stop();
         returning = lastLaunched != null;
-        if (dial.isActive()) dial.end(false);
+        if (dial.isOpen()) dial.close();
         // Coming back home should always show home, not whatever you left open
         closeOverlays();
         if (edit) setEdit(false, false);
@@ -293,6 +294,7 @@ public class HomeActivity extends Activity
     /** Close a menu, stack or sheet if one is open. Returns true if something closed. */
     private boolean closeOverlays() {
         boolean any = false;
+        if (dial.isOpen()) { dial.close(); any = true; }
         if (menu != null && menu.isShowing()) { menu.dismiss(); any = true; }
         if (stackPanel != null && stackPanel.isOpen()) { stackPanel.close(); any = true; }
         if (sheet != null && sheet.isShowing()) { sheet.dismiss(); any = true; }
@@ -325,7 +327,8 @@ public class HomeActivity extends Activity
 
     private String fingerprint() {
         return prefs.labels() + "|" + prefs.pinned() + "|" + prefs.dock() + "|" + prefs.hidden() + "|"
-                + prefs.raw().getString("stacks", "") + "|" + Widgets.list(this) + "|" + appsVersion;
+                + prefs.raw().getString("stacks", "") + "|" + Widgets.list(this) + "|" + prefs.big() + "|"
+                + prefs.raw().getString("wsize", "") + "|" + Theme.get(this).id + "|" + appsVersion;
     }
 
     @Override
@@ -335,11 +338,17 @@ public class HomeActivity extends Activity
     }
 
     private List<HomeView.Slot> homeSlots() {
+        migrateWidgets();
         List<HomeView.Slot> out = new ArrayList<>();
         Map<String, Stacks.Stack> stacks = Stacks.load(this);
         Set<String> hidden = prefs.hidden();
         Set<String> big = prefs.big();
         for (String key : prefs.pinned()) {
+            if (key.startsWith("w:")) {
+                String w = key.substring(2);
+                out.add(HomeView.Slot.widget(key, w, Widgets.size(this, w)));
+                continue;
+            }
             if (Stacks.isStack(key)) {
                 Stacks.Stack s = stacks.get(key.substring(Stacks.PREFIX.length()));
                 if (s == null) continue;
@@ -383,12 +392,73 @@ public class HomeActivity extends Activity
         builtFingerprint = fingerprint();
     }
 
+    /** Fresh data for built-in widgets (battery, next event, weather) without rebuilding home. */
     private void rebuildWidgets() {
-        widgets.build(home.widgetBox, edit, w -> {
-            widgets.remove(w);
-            rebuildWidgets();
-            builtFingerprint = fingerprint();
+        home.refreshWidgets();
+    }
+
+    /** Widgets used to sit above the grid; move any old ones into it once. */
+    private void migrateWidgets() {
+        List<String> old = Widgets.list(this);
+        if (old.isEmpty()) return;
+        List<String> h = new ArrayList<>(prefs.pinned());
+        int at = 0;
+        for (String w : old) if (!h.contains("w:" + w)) h.add(at++, "w:" + w);
+        prefs.setPinned(h);
+        Widgets.save(this, new ArrayList<>());
+    }
+
+    /** Put a widget on home in the first free spot, if there's room. */
+    private boolean addWidgetToHome(String w) {
+        int[] size = Widgets.size(this, w);
+        if (!HomeView.fits(homeSlots(), size[0], size[1])) {
+            Toast.makeText(this, "No room on home for that size. Remove or shrink something first.", Toast.LENGTH_LONG).show();
+            widgets.release(w);
+            return false;
+        }
+        List<String> h = new ArrayList<>(prefs.pinned());
+        h.add("w:" + w);
+        prefs.setPinned(h);
+        rebuild();
+        return true;
+    }
+
+    /** Edit mode: tap a widget to change its size or remove it. */
+    private void showWidgetSheet(String w) {
+        sheet = new Sheet(root, Widgets.name(this, w).toUpperCase(), insetBottom);
+        int[] cur = Widgets.size(this, w);
+        sheet.section("SIZE");
+        for (int[] sz : Widgets.sizes(this, w)) {
+            boolean on = sz[0] == cur[0] && sz[1] == cur[1];
+            String label = (on ? "✓  " : "") + sz[0] + " × " + sz[1];
+            String sub = sz[0] == 4 ? (sz[1] == 1 ? "Full width, one row" : "Full width, " + sz[1] + " rows")
+                    : sz[0] == 2 ? (sz[1] == 2 ? "Square, half width" : "Half width, " + sz[1] + " row" + (sz[1] > 1 ? "s" : "")) : "One cell";
+            sheet.row(new Glyph(Glyph.BIG, Ui.dpi(this, 22), Ui.WHITE), label, sub, () -> {
+                if (on) return;
+                int[] before = Widgets.size(this, w);
+                Widgets.setSize(this, w, sz);
+                // Check it still fits; if not, put the old size back
+                List<HomeView.Slot> slots = homeSlots();
+                boolean[][] used = new boolean[HomeView.ROWS][4];
+                boolean ok = true;
+                for (HomeView.Slot s2 : slots) if (HomeView.GridBox.place(used, s2.spanX(), s2.spanY()) == null) ok = false;
+                if (!ok) {
+                    Widgets.setSize(this, w, before);
+                    Toast.makeText(this, "Not enough room for that size", Toast.LENGTH_SHORT).show();
+                }
+                rebuild();
+            });
+        }
+        sheet.section("WIDGET");
+        sheet.row(new Glyph(Glyph.REMOVE, Ui.dpi(this, 22), Ui.RED), "Remove from home", null, () -> {
+            List<String> h = new ArrayList<>(prefs.pinned());
+            h.remove("w:" + w);
+            prefs.setPinned(h);
+            widgets.release(w);
+            Ui.detent(root);
+            rebuild();
         });
+        sheet.show();
     }
 
     private void refreshSuggestions() {
@@ -399,19 +469,30 @@ public class HomeActivity extends Activity
     @Override
     public Set<String> badges() { return badges; }
 
-    /** Black (OLED pixels stay off) or the phone's wallpaper, dimmed a little. */
+    /** Apply the theme: halftone background (or the wallpaper), colours, and status bar icons. */
     private void applyBackground() {
-        boolean wall = prefs.raw().getInt("background", 0) == 1;
+        // Old setting from before themes
+        if (prefs.raw().getInt("background", 0) == 1 && !prefs.raw().contains("theme")) Theme.set(this, Theme.WALLPAPER);
+        Theme t = Theme.get(this);
+        boolean wall = t.id == Theme.WALLPAPER;
         if (wall) {
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER);
             root.setBackgroundColor(0x59000000);
             grid.setVisibility(View.GONE);
         } else {
             getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER);
-            root.setBackgroundColor(Ui.BLACK);
+            root.setBackgroundColor(t.bg);
             grid.setVisibility(View.VISIBLE);
+            grid.refreshTheme();
         }
         grid.setGlowEnabled(!wall && Ui.motion(this) == Ui.MOTION_FULL);
+        home.applyTheme();
+        drawer.applyTheme();
+        if (editTray != null) themeEditChrome();
+        if (Build.VERSION.SDK_INT >= 30 && getWindow().getInsetsController() != null) {
+            int light = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+            getWindow().getInsetsController().setSystemBarsAppearance(t.light ? light : 0, light);
+        }
     }
 
     // ------------------------------------------------------------------ drawer motion
@@ -518,55 +599,77 @@ public class HomeActivity extends Activity
     // ------------------------------------------------------------------ edit mode
 
     private void buildEditChrome() {
+        // Top: a quiet label, and a red Done pill
         editTop = new LinearLayout(this);
         editTop.setGravity(Gravity.CENTER_VERTICAL);
-        editTop.setPadding(Ui.dpi(this, 20), Ui.dpi(this, 8), Ui.dpi(this, 12), Ui.dpi(this, 8));
+        editTop.setPadding(Ui.dpi(this, 22), Ui.dpi(this, 6), Ui.dpi(this, 14), Ui.dpi(this, 6));
         editTitle = new TextView(this);
-        editTitle.setText("Edit home");
-        editTitle.setTextColor(0xFFAAAAAA);
-        editTitle.setTextSize(14);
+        editTitle.setText("EDIT HOME");
+        editTitle.setTypeface(Ui.mono(this));
+        editTitle.setLetterSpacing(0.16f);
+        editTitle.setTextSize(11);
         editTitle.setGravity(Gravity.CENTER_VERTICAL);
         editTop.addView(editTitle, new LinearLayout.LayoutParams(0, Ui.dpi(this, 36), 1f));
         editDone = new TextView(this);
         editDone.setText("Done");
-        editDone.setTextColor(Ui.RED);
-        editDone.setTextSize(15);
+        editDone.setTextColor(Ui.WHITE);
+        editDone.setTextSize(14);
         editDone.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL));
-        editDone.setPadding(Ui.dpi(this, 12), Ui.dpi(this, 6), Ui.dpi(this, 12), Ui.dpi(this, 6));
+        editDone.setPadding(Ui.dpi(this, 18), Ui.dpi(this, 8), Ui.dpi(this, 18), Ui.dpi(this, 8));
+        GradientDrawable db = new GradientDrawable();
+        db.setColor(Ui.RED);
+        db.setCornerRadius(Ui.dp(this, 20));
+        editDone.setBackground(db);
         editDone.setOnClickListener(v -> { Ui.tap(v); setEdit(false, true); });
         editTop.addView(editDone);
         root.addView(editTop, new FrameLayout.LayoutParams(-1, -2, Gravity.TOP));
 
+        // Bottom: one compact floating pill
         editTray = new LinearLayout(this);
         editTray.setGravity(Gravity.CENTER);
-        editTray.addView(trayButton(Glyph.WIDGETS, "Widgets", this::showWidgetPicker));
-        editTray.addView(trayButton(Glyph.WALLPAPER, "Background", this::showBackgroundSheet));
-        editTray.addView(trayButton(Glyph.SETTINGS, "Settings", () -> startActivity(new Intent(this, SettingsActivity.class))));
-        root.addView(editTray, new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM));
+        editTray.setPadding(Ui.dpi(this, 6), Ui.dpi(this, 6), Ui.dpi(this, 6), Ui.dpi(this, 6));
+        editTray.addView(pillButton(Glyph.WIDGETS, "Widgets", this::showWidgetPicker));
+        editTray.addView(pillButton(Glyph.WALLPAPER, "Theme", this::showThemeSheet));
+        editTray.addView(pillButton(Glyph.SETTINGS, "Settings", () -> startActivity(new Intent(this, SettingsActivity.class))));
+        root.addView(editTray, new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL));
         editTop.setVisibility(View.INVISIBLE);
         editTray.setVisibility(View.INVISIBLE);
+        themeEditChrome();
     }
 
-    private View trayButton(int glyph, String label, Runnable run) {
+    private void themeEditChrome() {
+        Theme t = Theme.get(this);
+        editTitle.setTextColor(t.textMute);
+        GradientDrawable pill = new GradientDrawable();
+        pill.setColor(t.surface);
+        pill.setStroke(Ui.dpi(this, 1), t.surfaceLine);
+        pill.setCornerRadius(Ui.dp(this, 30));
+        editTray.setBackground(pill);
+        editTray.setElevation(Ui.dp(this, 10));
+        for (int i = 0; i < editTray.getChildCount(); i++) {
+            LinearLayout b = (LinearLayout) editTray.getChildAt(i);
+            ImageView ic = (ImageView) b.getChildAt(0);
+            TextView tx = (TextView) b.getChildAt(1);
+            ic.setImageDrawable(new Glyph(((Glyph) ic.getDrawable()).kind(), Ui.dpi(this, 18), t.text));
+            tx.setTextColor(t.text);
+        }
+    }
+
+    private View pillButton(int glyph, String label, Runnable run) {
         LinearLayout b = new LinearLayout(this);
-        b.setOrientation(LinearLayout.VERTICAL);
-        b.setGravity(Gravity.CENTER_HORIZONTAL);
+        b.setGravity(Gravity.CENTER_VERTICAL);
+        b.setPadding(Ui.dpi(this, 16), Ui.dpi(this, 10), Ui.dpi(this, 18), Ui.dpi(this, 10));
         ImageView ic = new ImageView(this);
-        ic.setImageDrawable(new Glyph(glyph, Ui.dpi(this, 20), Ui.WHITE));
-        ic.setScaleType(ImageView.ScaleType.CENTER);
-        GradientDrawable bg = new GradientDrawable();
-        bg.setShape(GradientDrawable.OVAL);
-        bg.setColor(0xFF1A1A1A);
-        ic.setBackground(bg);
-        b.addView(ic, new LinearLayout.LayoutParams(Ui.dpi(this, 48), Ui.dpi(this, 48)));
+        ic.setImageDrawable(new Glyph(glyph, Ui.dpi(this, 18), Ui.WHITE));
+        b.addView(ic, new LinearLayout.LayoutParams(Ui.dpi(this, 18), Ui.dpi(this, 18)));
         TextView t = new TextView(this);
         t.setText(label);
-        t.setTextColor(0xFFAAAAAA);
-        t.setTextSize(10.5f);
-        t.setPadding(0, Ui.dpi(this, 6), 0, 0);
+        t.setTextSize(13.5f);
+        t.setPadding(Ui.dpi(this, 8), 0, 0, 0);
         b.addView(t);
+        b.setBackground(new android.graphics.drawable.RippleDrawable(
+                android.content.res.ColorStateList.valueOf(0x22888888), null, new GradientDrawable() {{ setCornerRadius(Ui.dp(HomeActivity.this, 24)); setColor(Ui.WHITE); }}));
         b.setOnClickListener(v -> { Ui.tap(v); run.run(); });
-        b.setLayoutParams(new LinearLayout.LayoutParams(Ui.dpi(this, 88), -2));
         return b;
     }
 
@@ -589,15 +692,15 @@ public class HomeActivity extends Activity
 
     private void applyEdit(float e) {
         editP = e;
-        float s = 1 - 0.14f * e;
+        float s = 1 - 0.16f * e;
         home.setScaleX(s);
         home.setScaleY(s);
-        home.setTranslationY(-Ui.dp(this, 6) * e);
+        home.setTranslationY(-Ui.dp(this, 22) * e);
         home.setTranslationX(0);
         home.setAlpha(1);
         editFrame.setScaleX(s * 1.01f);
         editFrame.setScaleY(s * 1.005f);
-        editFrame.setTranslationY(-Ui.dp(this, 6) * e);
+        editFrame.setTranslationY(-Ui.dp(this, 22) * e);
         editFrame.setAlpha(e);
         editFrame.setVisibility(e > 0.01f ? View.VISIBLE : View.INVISIBLE);
         float chrome = Ui.clamp((e - 0.3f) / 0.7f, 0, 1);
@@ -614,7 +717,8 @@ public class HomeActivity extends Activity
 
     private static final int Z_NONE = -1, Z_HOME = HomeView.ZONE_HOME, Z_DOCK = HomeView.ZONE_DOCK, Z_REMOVE = 9;
     private View dragSrc;
-    private AppIconView dragFloat;
+    private View dragFloat;
+    private int floatW, floatH;
     private int dragZone = Z_NONE, dragIndex = -1;
     private int hoverZone = Z_NONE, hoverIndex = -1;
     private boolean hoverMerge;
@@ -663,16 +767,34 @@ public class HomeActivity extends Activity
         dragSrc = src;
         dragZone = z[0];
         dragIndex = i[0];
-        dragFloat = new AppIconView(this, 48, false);
-        if (Stacks.isStack(key)) {
-            Stacks.Stack st = Stacks.get(this, key);
-            dragFloat.bindStack(key, st == null ? "" : st.name, st == null ? new ArrayList<>() : apps.resolve(st.apps), null);
+        if (key.startsWith("w:") || src instanceof BigStackView) {
+            // Widgets and large folders: drag a small picture of them
+            float k = 0.55f * home.getScaleX();
+            floatW = Math.max(1, (int) (src.getWidth() * k));
+            floatH = Math.max(1, (int) (src.getHeight() * k));
+            android.graphics.Bitmap b = android.graphics.Bitmap.createBitmap(floatW, floatH, android.graphics.Bitmap.Config.ARGB_8888);
+            android.graphics.Canvas cv = new android.graphics.Canvas(b);
+            cv.scale(k, k);
+            src.draw(cv);
+            ImageView iv = new ImageView(this);
+            iv.setImageBitmap(b);
+            iv.setAlpha(0.92f);
+            iv.setElevation(Ui.dp(this, 16));
+            dragFloat = iv;
         } else {
-            dragFloat.bind(apps.find(key), null);
+            AppIconView fl = new AppIconView(this, 48, false);
+            if (Stacks.isStack(key)) {
+                Stacks.Stack st = Stacks.get(this, key);
+                fl.bindStack(key, st == null ? "" : st.name, st == null ? new ArrayList<>() : apps.resolve(st.apps), null);
+            } else {
+                fl.bind(apps.find(key), null);
+            }
+            fl.setLifted(true);
+            fl.setClickable(false);
+            floatW = floatH = Ui.dpi(this, 66);
+            dragFloat = fl;
         }
-        dragFloat.setLifted(true);
-        dragFloat.setClickable(false);
-        root.addView(dragFloat, new FrameLayout.LayoutParams(Ui.dpi(this, 66), Ui.dpi(this, 66)));
+        root.addView(dragFloat, new FrameLayout.LayoutParams(floatW, floatH));
         moveFloat(x, y);
         ((Cell) src).setGhost(true);
         editTitle.setText("Drag here to remove from home");
@@ -684,8 +806,8 @@ public class HomeActivity extends Activity
 
     private void moveFloat(float x, float y) {
         if (dragFloat == null) return;
-        dragFloat.setTranslationX(x - Ui.dp(this, 33));
-        dragFloat.setTranslationY(y - Ui.dp(this, 33) - Ui.dp(this, 24));
+        dragFloat.setTranslationX(x - floatW / 2f);
+        dragFloat.setTranslationY(y - floatH / 2f - Ui.dp(this, 24));
     }
 
     private void dragMove(float x, float y) {
@@ -707,7 +829,8 @@ public class HomeActivity extends Activity
                 zone = z[0];
                 index = i[0];
                 // Dropping right on top of another app (home only) makes or grows a stack
-                merge = zone == Z_HOME && ((Cell) cell).hasContent() && discDistance(cell, x, fy) < 0.62f;
+                boolean widgetInvolved = cell instanceof Widgets.WidgetCell || dragSrc instanceof Widgets.WidgetCell;
+                merge = !widgetInvolved && zone == Z_HOME && ((Cell) cell).hasContent() && discDistance(cell, x, fy) < 0.62f;
             }
         }
         if (zone != hoverZone || index != hoverIndex || merge != hoverMerge) {
@@ -747,9 +870,11 @@ public class HomeActivity extends Activity
         String item = src.get(srcIdx);
         boolean itemIsStack = Stacks.isStack(item);
 
+        boolean itemIsWidget = item.startsWith("w:");
         if (dstZone == Z_REMOVE) {
             src.remove(srcIdx);
             if (itemIsStack) Stacks.delete(this, item);
+            if (itemIsWidget) widgets.release(item.substring(2));
             Ui.detent(root);
         } else if (merge) {
             String target = h.get(dstIdx);
@@ -776,15 +901,15 @@ public class HomeActivity extends Activity
             Ui.firm(root);
         } else {
             List<String> dst = dstZone == Z_HOME ? h : d;
-            if (dstZone == Z_DOCK && itemIsStack) {
-                Toast.makeText(this, "Stacks live on home, not in the dock", Toast.LENGTH_SHORT).show();
+            if (dstZone == Z_DOCK && (itemIsStack || itemIsWidget)) {
+                Toast.makeText(this, "Only apps go in the dock", Toast.LENGTH_SHORT).show();
                 return;
             }
             if (dstIdx < dst.size()) {
                 // Swap with whatever is there
                 String other = dst.get(dstIdx);
-                if (srcZone == Z_DOCK && Stacks.isStack(other)) {
-                    Toast.makeText(this, "Stacks live on home, not in the dock", Toast.LENGTH_SHORT).show();
+                if (srcZone == Z_DOCK && (Stacks.isStack(other) || other.startsWith("w:"))) {
+                    Toast.makeText(this, "Only apps go in the dock", Toast.LENGTH_SHORT).show();
                     return;
                 }
                 if (src == dst) Collections.swap(dst, srcIdx, dstIdx);
@@ -801,7 +926,7 @@ public class HomeActivity extends Activity
             }
             Ui.detent(root);
         }
-        while (h.size() > HomeView.HOME_SLOTS) h.remove(h.size() - 1);
+        while (h.size() > 24) h.remove(h.size() - 1);
         while (d.size() > HomeView.DOCK_SLOTS) d.remove(d.size() - 1);
         prefs.setPinned(h);
         prefs.setDock(d);
@@ -812,19 +937,17 @@ public class HomeActivity extends Activity
 
     private void showWidgetPicker() {
         sheet = new Sheet(root, "WIDGETS", insetBottom);
-        List<String> have = Widgets.list(this);
+        List<String> have = new ArrayList<>();
+        for (String k : prefs.pinned()) if (k.startsWith("w:")) have.add(k.substring(2));
         sheet.section("DOT HOME");
         boolean any = false;
         for (String[] b : Widgets.BUILT_IN) {
             if (have.contains("b:" + b[0])) continue;
             any = true;
             sheet.row(new Glyph(Glyph.WIDGETS, Ui.dpi(this, 22), Ui.WHITE), b[1], b[2], () -> {
-                Widgets.add(this, "b:" + b[0]);
-                if (b[0].equals("weather") && !Weather.enabled(this)) {
+                if (addWidgetToHome("b:" + b[0]) && b[0].equals("weather") && !Weather.enabled(this)) {
                     Toast.makeText(this, "Turn on weather in settings to fill it in", Toast.LENGTH_LONG).show();
                 }
-                rebuildWidgets();
-                builtFingerprint = fingerprint();
             });
         }
         if (!any) sheet.row(null, "All of Dot Home's widgets are on home", null, null);
@@ -889,9 +1012,7 @@ public class HomeActivity extends Activity
     }
 
     private void finishAddWidget(int id) {
-        Widgets.add(this, "a:" + id);
-        rebuildWidgets();
-        builtFingerprint = fingerprint();
+        addWidgetToHome("a:" + id);
     }
 
     @Override
@@ -907,23 +1028,24 @@ public class HomeActivity extends Activity
         }
     }
 
-    private void showBackgroundSheet() {
-        sheet = new Sheet(root, "BACKGROUND", insetBottom);
-        int current = prefs.raw().getInt("background", 0);
-        sheet.row(null, (current == 0 ? "✓  " : "") + "Black", "Pure black with a faint dot grid. Saves battery on OLED.", () -> {
-            prefs.raw().edit().putInt("background", 0).apply();
-            applyBackground();
-        });
-        sheet.row(null, (current == 1 ? "✓  " : "") + "Your wallpaper", "Dimmed a little so text stays readable.", () -> {
-            prefs.raw().edit().putInt("background", 1).apply();
-            applyBackground();
-        });
+    private void showThemeSheet() {
+        sheet = new Sheet(root, "THEME", insetBottom);
+        int cur = Theme.get(this).id;
+        sheet.row(null, (cur == Theme.DOT ? "✓  " : "") + "Dot", "Black, with a halftone field and the Glyph ring. Kind to OLED.", () -> switchTheme(Theme.DOT));
+        sheet.row(null, (cur == Theme.PAPER ? "✓  " : "") + "Paper", "Nothing's off-white: light dots, white icons, black glyphs.", () -> switchTheme(Theme.PAPER));
+        sheet.row(null, (cur == Theme.WALLPAPER ? "✓  " : "") + "Your wallpaper", "Your own picture behind Dot's colours, dimmed a little.", () -> switchTheme(Theme.WALLPAPER));
         sheet.row(null, "Change wallpaper…", "Opens your phone's wallpaper picker", () -> {
             try {
                 startActivity(Intent.createChooser(new Intent(Intent.ACTION_SET_WALLPAPER), "Wallpaper"));
             } catch (Exception ignored) { }
         });
         sheet.show();
+    }
+
+    private void switchTheme(int id) {
+        Theme.set(this, id);
+        applyBackground();
+        rebuild();
     }
 
     private void showStackSheet(View anchor, RectF disc, String slot, String name, List<Apps.App> stackApps) {
@@ -1280,7 +1402,7 @@ public class HomeActivity extends Activity
     }
 
     private boolean overlayOpen() {
-        return (menu != null && menu.isShowing()) || (stackPanel != null && stackPanel.isOpen()) || (sheet != null && sheet.isShowing());
+        return dial.isOpen() || (menu != null && menu.isShowing()) || (stackPanel != null && stackPanel.isOpen()) || (sheet != null && sheet.isShowing());
     }
 
     /**
@@ -1295,6 +1417,10 @@ public class HomeActivity extends Activity
         private float downX, downY, originY, originX, originProgress;
         private boolean dragging, draggingToday, swiped, editDown, editDragging;
         private float pinchScale = 1;
+        // Edit mode needs a deliberate hold on empty space: 650 ms with the finger kept still
+        private final Runnable emptyHold = () -> {
+            if (progress == 0 && todayP == 0 && !dragging && !draggingToday && !swiped && !edit && !overlayOpen()) setEdit(true, true);
+        };
         private final Runnable editLongPress = () -> {
             if (editDown && !editDragging && beginAppDrag(downX, downY)) editDragging = true;
         };
@@ -1309,10 +1435,8 @@ public class HomeActivity extends Activity
                     if (progress == 0 && todayP == 0 && !edit) doubleTap();
                     return true;
                 }
-                @Override public void onLongPress(MotionEvent e) {
-                    if (progress == 0 && todayP == 0 && !dragging && !edit) setEdit(true, true);
-                }
             });
+            taps.setIsLongpressEnabled(false); // our own, longer and stricter hold opens edit mode
             pinch = new ScaleGestureDetector(c, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
                 @Override public boolean onScaleBegin(ScaleGestureDetector d) { pinchScale = 1; return true; }
                 @Override public boolean onScale(ScaleGestureDetector d) {
@@ -1326,7 +1450,7 @@ public class HomeActivity extends Activity
         @Override
         public boolean dispatchTouchEvent(MotionEvent e) {
             grid.touch(e);
-            if (!edit && progress == 0 && todayP == 0 && !overlayOpen() && !dial.isActive()) pinch.onTouchEvent(e);
+            if (!edit && progress == 0 && todayP == 0 && !overlayOpen()) pinch.onTouchEvent(e);
             return super.dispatchTouchEvent(e);
         }
 
@@ -1345,7 +1469,7 @@ public class HomeActivity extends Activity
             if (edit) {
                 // While editing, the home area is ours (for drag & drop); the bars and widget buttons are not
                 if (e.getActionMasked() == MotionEvent.ACTION_DOWN) {
-                    return !(inside(editTop, e) || inside(editTray, e) || inside(home.widgetBox, e));
+                    return !(inside(editTop, e) || inside(editTray, e));
                 }
                 return false;
             }
@@ -1378,7 +1502,7 @@ public class HomeActivity extends Activity
             if (dragging || draggingToday || swiped) return true;
             float dx = e.getX() - downX, dy = e.getY() - downY;
             boolean vertical = Math.abs(dy) >= slop && Math.abs(dy) > Math.abs(dx) * 1.2f;
-            boolean horizontal = Math.abs(dx) >= slop * 1.5f && Math.abs(dx) > Math.abs(dy) * 1.4f;
+            boolean horizontal = Math.abs(dx) >= Ui.dp(getContext(), 30) && Math.abs(dx) > Math.abs(dy) * 1.6f;
             if (todayP >= 0.999f) {
                 if (horizontal && dx < 0) { today.hideKeyboard(); startTodayDrag(e.getX()); return true; }
                 return false;
@@ -1386,7 +1510,8 @@ public class HomeActivity extends Activity
             if (progress <= 0.001f && todayP <= 0.001f) {
                 if (horizontal && dx > 0) { startTodayDrag(e.getX()); return true; }
                 if (vertical && dy < 0) { startDrawerDrag(e.getY()); return true; }
-                if (vertical && dy > 0 && prefs.swipeDownNotifications()) {
+                // Notifications only on a deliberate pull, not a nudge
+                if (vertical && dy > Ui.dp(getContext(), 72) && Math.abs(dy) > Math.abs(dx) * 2f && prefs.swipeDownNotifications()) {
                     swiped = true;
                     expandNotifications();
                     return true;
@@ -1435,10 +1560,14 @@ public class HomeActivity extends Activity
             if (edit) return editTouch(e);
             track(e);
             if (!dragging && !draggingToday && progress == 0 && todayP == 0) taps.onTouchEvent(e);
+            if (e.getActionMasked() == MotionEvent.ACTION_MOVE && Math.hypot(e.getX() - downX, e.getY() - downY) > slop) removeCallbacks(emptyHold);
+            if (e.getActionMasked() == MotionEvent.ACTION_UP || e.getActionMasked() == MotionEvent.ACTION_CANCEL
+                    || e.getActionMasked() == MotionEvent.ACTION_POINTER_DOWN) removeCallbacks(emptyHold);
             switch (e.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
                     downX = e.getX();
                     downY = e.getY();
+                    if (progress == 0 && todayP == 0) postDelayed(emptyHold, 650);
                     return true;
                 case MotionEvent.ACTION_MOVE:
                     if (!dragging && !draggingToday && !swiped && e.getPointerCount() == 1) decide(e);
@@ -1500,7 +1629,8 @@ public class HomeActivity extends Activity
                         // A tap on empty space ends editing; a tap on an app does nothing
                         int[] z = new int[1], i = new int[1];
                         View cell = cellAt(e.getX(), e.getY(), z, i);
-                        if (cell == null || !((Cell) cell).hasContent()) setEdit(false, true);
+                        if (cell instanceof Widgets.WidgetCell) showWidgetSheet(((Widgets.WidgetCell) cell).key);
+                        else if (cell == null || !((Cell) cell).hasContent()) setEdit(false, true);
                     }
                     editDown = false;
                     editDragging = false;

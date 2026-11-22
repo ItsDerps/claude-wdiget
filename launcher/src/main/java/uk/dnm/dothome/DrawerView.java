@@ -67,6 +67,7 @@ public class DrawerView extends FrameLayout {
         pbg.setStroke(Ui.dpi(c, 1), Ui.LINE);
         pbg.setCornerRadius(Ui.dp(c, 24));
         pill.setBackground(pbg);
+        pillBg = pbg;
         search = new EditText(c);
         search.setBackground(null);
         search.setHint("Search apps, settings, web");
@@ -136,6 +137,20 @@ public class DrawerView extends FrameLayout {
         s.setOverScrollMode(OVER_SCROLL_NEVER);
         s.setClipToPadding(false);
         return s;
+    }
+
+    private GradientDrawable pillBg;
+
+    /** Background, search box and labels follow the theme. */
+    void applyTheme() {
+        Theme t = Theme.get(getContext());
+        setBackgroundColor(t.light ? 0xFFF4F4F1 : 0xFF050505);
+        if (pillBg != null) {
+            pillBg.setColor(t.light ? Ui.WHITE : 0xFF151515);
+            pillBg.setStroke(Ui.dpi(getContext(), 1), t.surfaceLine);
+        }
+        search.setTextColor(t.text);
+        search.setHintTextColor(t.textFaint);
     }
 
     void setInsets(int top, int bottom) {

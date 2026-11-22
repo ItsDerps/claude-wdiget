@@ -12,23 +12,23 @@ import java.util.List;
 import java.util.function.Supplier;
 
 /**
- * A thin strip on the right edge, marked by a column of faint dots. Touch it and the app dial
- * slides out; roll your thumb to turn it. It's excluded from the back gesture so the swipe
+ * A thin strip on the right edge, marked by a column of faint dots. Touch it and the quick
+ * panel slides out; move your thumb to pick a letter, then slide onto an app. It's excluded from the back gesture so the swipe
  * reaches the dial instead.
  */
 public class EdgeHandle extends View {
 
-    private final ArcDialView dial;
+    private final QuickPanel dial;
     private final Supplier<List<Apps.App>> apps;
     private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
     private boolean touching;
     private final Rect exclusion = new Rect();
 
-    public EdgeHandle(Context c, ArcDialView dial, Supplier<List<Apps.App>> apps) {
+    public EdgeHandle(Context c, QuickPanel dial, Supplier<List<Apps.App>> apps) {
         super(c);
         this.dial = dial;
         this.apps = apps;
-        setContentDescription("App dial: slide your thumb here");
+        setContentDescription("Quick panel: slide your thumb here");
     }
 
     @Override
@@ -57,8 +57,7 @@ public class EdgeHandle extends View {
                 getParent().requestDisallowInterceptTouchEvent(true);
                 touching = true;
                 invalidate();
-                float frac = e.getY() / Math.max(1, getHeight());
-                dial.begin(apps.get(), frac, e.getRawY());
+                dial.begin(apps.get(), e.getRawY());
                 return true;
             }
             case MotionEvent.ACTION_MOVE:

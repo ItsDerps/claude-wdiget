@@ -33,7 +33,18 @@ public class HomeView extends LinearLayout {
         final String stackName;
         final List<Apps.App> stackApps;
         boolean big;                   // large icon / large folder (2 × 2)
+        String widget;                 // "b:battery" / "a:<id>" when this slot is a widget
+        int sx = 1, sy = 1;            // size in cells
         Slot(String key, Apps.App app) { this.key = key; this.app = app; stackName = null; stackApps = null; }
+        static Slot widget(String key, String w, int[] size) {
+            Slot s = new Slot(key, (Apps.App) null);
+            s.widget = w;
+            s.sx = size[0];
+            s.sy = size[1];
+            return s;
+        }
+        int spanX() { return widget != null ? sx : big ? 2 : 1; }
+        int spanY() { return widget != null ? sy : big ? 2 : 1; }
         Slot(String key, String name, List<Apps.App> apps) { this.key = key; app = null; stackName = name; stackApps = apps; }
     }
 
@@ -51,6 +62,26 @@ public class HomeView extends LinearLayout {
     private final GridBox pinnedBox;
     private final LinearLayout dock;
     private BigStackView.Listener bigListener;
+    private Widgets widgets;
+    static final int ROWS = 6;
+
+    void setWidgets(Widgets w) { widgets = w; }
+
+    /** Refresh built-in widgets' data (battery, next event, weather) without rebuilding. */
+    void refreshWidgets() {
+        for (View v : homeCells) {
+            if (v instanceof Widgets.WidgetCell && ((Widgets.WidgetCell) v).content instanceof Widgets.Live) {
+                ((Widgets.Live) ((Widgets.WidgetCell) v).content).refresh();
+            }
+        }
+    }
+
+    /** Would one more item of this size fit after these slots? */
+    static boolean fits(List<Slot> slots, int sx, int sy) {
+        boolean[][] used = new boolean[ROWS][4];
+        for (Slot s : slots) GridBox.place(used, s.spanX(), s.spanY());
+        return GridBox.place(used, sx, sy) != null;
+    }
     private final View hint;
     private final View top;
 
@@ -96,6 +127,7 @@ public class HomeView extends LinearLayout {
         widgetBox.setPadding(Ui.dpi(c, 14), Ui.dpi(c, 16), Ui.dpi(c, 14), 0);
         widgetBox.setClipChildren(false);
         addView(widgetBox, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
+        widgetBox.setVisibility(GONE); // widgets now live in the grid
 
         addView(new View(c), new LayoutParams(1, 0, 1f));
 
@@ -152,6 +184,23 @@ public class HomeView extends LinearLayout {
         return d;
     }
 
+    /** Re-colour text, chips and the dock for the current theme. */
+    void applyTheme() {
+        Theme t = Theme.get(getContext());
+        date.setTextColor(t.textMute);
+        for (TextView chip : new TextView[]{battery, event, weather}) {
+            chip.setTextColor(t.light ? 0xFF2A2A2A : 0xFFCFCFCF);
+            GradientDrawable bg = (GradientDrawable) chip.getBackground();
+            bg.setColor(t.chipBg);
+            bg.setStroke(Ui.dpi(getContext(), 1), t.surfaceLine);
+        }
+        GradientDrawable tray = (GradientDrawable) dock.getBackground();
+        tray.setColor(t.light ? 0x0F000000 : 0x0AFFFFFF);
+        tray.setStroke(Ui.dpi(getContext(), 1), t.light ? 0xFFDADAD5 : 0xFF1C1C1C);
+        clock.applyTheme();
+        hint.invalidate();
+    }
+
     void setInsets(int topInset, int bottomInset) {
         setPadding(0, topInset, 0, bottomInset);
     }
@@ -186,7 +235,7 @@ public class HomeView extends LinearLayout {
             event.setVisibility(GONE);
         } else {
             event.setText(text);
-            event.setCompoundDrawables(dot(Ui.WHITE), null, null, null);
+            event.setCompoundDrawables(dot(Theme.get(getContext()).text), null, null, null);
             event.setVisibility(VISIBLE);
         }
     }
@@ -200,25 +249,26 @@ public class HomeView extends LinearLayout {
         homeCells.clear();
         dockCells.clear();
         // Place items the way the grid will, so edit mode can fill every free spot with a dashed slot
-        boolean[][] used = new boolean[12][4];
+        boolean[][] used = new boolean[ROWS][4];
         int rowsUsed = 0;
         for (Slot sl : pinned) {
             View v = slotView(sl, labels, badges, l);
-            int[] at = GridBox.place(used, sl.big ? 2 : 1);
+            if (v == null) v = new View(c);
+            int[] at = GridBox.place(used, sl.spanX(), sl.spanY());
             if (at == null) continue;
-            rowsUsed = Math.max(rowsUsed, at[0] + (sl.big ? 2 : 1));
-            pinnedBox.addView(v, new GridBox.Params(sl.big ? 2 : 1));
+            rowsUsed = Math.max(rowsUsed, at[0] + sl.spanY());
+            pinnedBox.addView(v, new GridBox.Params(sl.spanX(), sl.spanY()));
             homeCells.add(v);
         }
         if (edit) {
-            int rows = Math.max(3, Math.min(6, rowsUsed + 1));
+            int rows = Math.max(3, Math.min(ROWS, rowsUsed + 1));
             for (int r = 0; r < rows; r++) {
                 for (int col = 0; col < 4; col++) {
                     if (used[r][col]) continue;
                     used[r][col] = true;
                     AppIconView ph = new AppIconView(c, 48, labels);
                     ph.makePlaceholder();
-                    pinnedBox.addView(ph, new GridBox.Params(1));
+                    pinnedBox.addView(ph, new GridBox.Params(1, 1));
                     homeCells.add(ph);
                 }
             }
@@ -244,6 +294,7 @@ public class HomeView extends LinearLayout {
     }
 
     private View slotView(Slot s, boolean labels, Set<String> badges, AppIconView.Listener l) {
+        if (s.widget != null) return widgets == null ? null : widgets.cell(s.widget);
         if (s.app != null) {
             AppIconView v = new AppIconView(getContext(), s.big ? 104 : 48, labels);
             v.bind(s.app, l);
@@ -331,9 +382,9 @@ public class HomeView extends LinearLayout {
      */
     static final class GridBox extends android.view.ViewGroup {
         static final class Params extends android.view.ViewGroup.LayoutParams {
-            final int span;
+            final int sx, sy;
             int row, col;
-            Params(int span) { super(MATCH_PARENT, WRAP_CONTENT); this.span = span; }
+            Params(int sx, int sy) { super(MATCH_PARENT, WRAP_CONTENT); this.sx = sx; this.sy = sy; }
         }
 
         private int cellW, cellH, rowGap;
@@ -343,15 +394,15 @@ public class HomeView extends LinearLayout {
             rowGap = Ui.dpi(c, 6);
         }
 
-        /** Find and mark the first free spot for a span (1 or 2). Returns {row, col} or null. */
-        static int[] place(boolean[][] used, int span) {
-            for (int r = 0; r <= used.length - span; r++) {
-                for (int c = 0; c <= 4 - span; c++) {
+        /** Find and mark the first free spot for a size (columns × rows). Returns {row, col} or null. */
+        static int[] place(boolean[][] used, int sx, int sy) {
+            for (int r = 0; r <= used.length - sy; r++) {
+                for (int c = 0; c <= 4 - sx; c++) {
+                    if (sx == 2 && c % 2 != 0) continue; // two-wide items sit on the left or right half
                     boolean free = true;
-                    for (int dr = 0; dr < span && free; dr++) for (int dc = 0; dc < span; dc++) if (used[r + dr][c + dc]) { free = false; break; }
-                    if (span == 2 && c % 2 != 0) free = false; // large items sit on the left or right half
+                    for (int dr = 0; dr < sy && free; dr++) for (int dc = 0; dc < sx; dc++) if (used[r + dr][c + dc]) { free = false; break; }
                     if (!free) continue;
-                    for (int dr = 0; dr < span; dr++) for (int dc = 0; dc < span; dc++) used[r + dr][c + dc] = true;
+                    for (int dr = 0; dr < sy; dr++) for (int dc = 0; dc < sx; dc++) used[r + dr][c + dc] = true;
                     return new int[]{r, c};
                 }
             }
@@ -366,25 +417,26 @@ public class HomeView extends LinearLayout {
             cellH = 0;
             for (int i = 0; i < getChildCount(); i++) {
                 View v = getChildAt(i);
-                if (((Params) v.getLayoutParams()).span == 1) {
+                Params pp = (Params) v.getLayoutParams();
+                if (pp.sx == 1 && pp.sy == 1) {
                     v.measure(MeasureSpec.makeMeasureSpec(cellW, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED));
                     cellH = Math.max(cellH, v.getMeasuredHeight());
                 }
             }
             if (cellH == 0) cellH = Ui.dpi(getContext(), 78);
-            boolean[][] used = new boolean[12][4];
+            boolean[][] used = new boolean[ROWS][4];
             int rows = 0;
             for (int i = 0; i < getChildCount(); i++) {
                 View v = getChildAt(i);
                 Params p = (Params) v.getLayoutParams();
-                int[] at = place(used, p.span);
+                int[] at = place(used, p.sx, p.sy);
                 if (at == null) { p.row = -1; continue; }
                 p.row = at[0];
                 p.col = at[1];
-                rows = Math.max(rows, at[0] + p.span);
-                if (p.span == 2) {
-                    v.measure(MeasureSpec.makeMeasureSpec(cellW * 2, MeasureSpec.EXACTLY),
-                            MeasureSpec.makeMeasureSpec(cellH * 2 + rowGap, MeasureSpec.EXACTLY));
+                rows = Math.max(rows, at[0] + p.sy);
+                if (p.sx > 1 || p.sy > 1) {
+                    v.measure(MeasureSpec.makeMeasureSpec(cellW * p.sx, MeasureSpec.EXACTLY),
+                            MeasureSpec.makeMeasureSpec(cellH * p.sy + rowGap * (p.sy - 1), MeasureSpec.EXACTLY));
                 }
             }
             int height = rows == 0 ? 0 : rows * cellH + (rows - 1) * rowGap;
@@ -398,7 +450,7 @@ public class HomeView extends LinearLayout {
                 Params p = (Params) v.getLayoutParams();
                 if (p.row < 0) { v.layout(0, 0, 0, 0); continue; }
                 int x = getPaddingLeft() + p.col * cellW, y = getPaddingTop() + p.row * (cellH + rowGap);
-                int w = cellW * p.span, h = p.span == 1 ? cellH : cellH * 2 + rowGap;
+                int w = cellW * p.sx, h = cellH * p.sy + rowGap * (p.sy - 1);
                 v.layout(x, y, x + w, y + h);
             }
         }
@@ -414,7 +466,8 @@ public class HomeView extends LinearLayout {
         protected void onDraw(Canvas c) {
             float cx = getWidth() / 2f, cy = getHeight() / 2f + Ui.dp(getContext(), 2), gap = Ui.dp(getContext(), 9);
             for (int i = -1; i <= 1; i++) {
-                p.setColor(i == 0 ? 0xFF888888 : 0xFF555555);
+                boolean light = Theme.get(getContext()).light;
+                p.setColor(i == 0 ? 0xFF888888 : light ? 0xFFB5B5B0 : 0xFF555555);
                 c.drawCircle(cx + i * gap, cy, Ui.dp(getContext(), 2), p);
             }
         }

@@ -44,6 +44,13 @@ public class DotClockView extends View {
         update();
     }
 
+    void applyTheme() {
+        Theme t = Theme.get(getContext());
+        lit.setColor(t.text);
+        unlit.setColor(t.light ? 0xFFDEDED9 : 0xFF161616);
+        invalidate();
+    }
+
     /** Re-read the time (call each minute). */
     void update() {
         Calendar cal = Calendar.getInstance();
@@ -114,7 +121,15 @@ public class DotClockView extends View {
                         c.drawCircle(cx + scatterX[dot] * (1 - e), cy + scatterY[dot] * (1 - e), r, lit);
                     } else {
                         lit.setAlpha(255);
-                        c.drawCircle(cx, cy, r, lit);
+                        if (ch == ':') {
+                            // The colon is red: a small Nothing signature
+                            int keep = lit.getColor();
+                            lit.setColor(Ui.RED);
+                            c.drawCircle(cx, cy, r, lit);
+                            lit.setColor(keep);
+                        } else {
+                            c.drawCircle(cx, cy, r, lit);
+                        }
                     }
                     dot++;
                 }
