@@ -147,7 +147,7 @@ final class SearchEngine {
             {"Battery", Intent.ACTION_POWER_USAGE_SUMMARY, "power charge saver"},
             {"Display", Settings.ACTION_DISPLAY_SETTINGS, "brightness screen dark mode"},
             {"Sound & vibration", Settings.ACTION_SOUND_SETTINGS, "volume ringtone vibrate"},
-            {"Notifications", Settings.ACTION_NOTIFICATION_SETTINGS, "alerts"},
+            {"Notifications", "android.settings.NOTIFICATION_SETTINGS", "alerts"},
             {"Apps", Settings.ACTION_APPLICATION_SETTINGS, "applications"},
             {"Default apps", Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS, "home launcher browser"},
             {"Location", Settings.ACTION_LOCATION_SOURCE_SETTINGS, "gps"},
