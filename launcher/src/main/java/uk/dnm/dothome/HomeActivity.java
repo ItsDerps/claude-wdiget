@@ -115,7 +115,8 @@ public class HomeActivity extends Activity
         f.addAction(Intent.ACTION_TIMEZONE_CHANGED);
         f.addAction(Intent.ACTION_DATE_CHANGED);
         f.addAction(Intent.ACTION_BATTERY_CHANGED);
-        registerReceiver(receiver, f);
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_NOT_EXPORTED);
+        else registerReceiver(receiver, f);
 
         DotsListener.listener = pkgs -> runOnUiThread(() -> {
             badges.clear();
