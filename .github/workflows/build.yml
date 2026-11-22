@@ -18,6 +18,7 @@ jobs:
       - run: |
           cp app/build/outputs/apk/debug/app-debug.apk ClaudeWidget.apk
           cp keyboard/build/outputs/apk/debug/keyboard-debug.apk SwipeKeys.apk
+          cp launcher/build/outputs/apk/debug/launcher-debug.apk DotHome.apk
       - uses: actions/upload-artifact@v4
         with:
           name: ClaudeWidget
@@ -26,6 +27,10 @@ jobs:
         with:
           name: SwipeKeys
           path: SwipeKeys.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DotHome
+          path: DotHome.apk
       - name: Publish as a release (easy phone download)
         uses: softprops/action-gh-release@v2
         with:
@@ -34,6 +39,7 @@ jobs:
           files: |
             ClaudeWidget.apk
             SwipeKeys.apk
+            DotHome.apk
           make_latest: true
     permissions:
       contents: write
