@@ -57,6 +57,7 @@ public class SetupActivity extends Activity {
 
         TextView how = text("Tap a key for the letter. Pull a key DOWN to type the small character "
                 + "shown above it — numbers on the top row, symbols on the rest.\n\n"
+                + "• Hold shift (or 123) to light up every key's number/symbol — tap a key while holding to type it\n"
                 + "• Slide across the letters to swipe-write a word\n"
                 + "• Tap a suggestion above the keys to finish a word — it learns the words you use\n"
                 + "• The squares button on the left of that strip opens emoji, notes, one-handed mode and settings\n"
@@ -118,6 +119,19 @@ public class SetupActivity extends Activity {
         vibrate.setOnCheckedChangeListener((b, on) -> prefs.edit().putBoolean(SwipeKeyboardService.PREF_VIBRATE, on).apply());
         vibrate.setPadding(0, px(14), 0, px(8));
         col.addView(vibrate);
+
+        Switch hints = new Switch(this);
+        hints.setText("Clearer number & symbol hints");
+        hints.setTextColor(Color.WHITE);
+        hints.setTextSize(16);
+        hints.setChecked(prefs.getBoolean(SwipeKeyboardService.PREF_CLEAR_HINTS, false));
+        hints.setOnCheckedChangeListener((b, on) -> prefs.edit().putBoolean(SwipeKeyboardService.PREF_CLEAR_HINTS, on).apply());
+        hints.setPadding(0, px(8), 0, px(8));
+        col.addView(hints);
+        TextView hintsHelp = text("Makes the small characters on each key bigger and brighter. "
+                + "Or hold shift (or 123) for a moment to light them all up big; while holding, tap any key to type its symbol.", 14);
+        hintsHelp.setTextColor(0xFFBBBBBB);
+        col.addView(hintsHelp);
 
         Switch glide = new Switch(this);
         glide.setText("Swipe to write");

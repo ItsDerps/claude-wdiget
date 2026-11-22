@@ -113,6 +113,27 @@ public class KeyboardView extends View {
     private float rowDp = 58;          // key row height in portrait
     private float flickDp = 26;        // how far to pull down for the second character
     private boolean haptics = true;
+    private boolean clearHints;        // bigger, brighter number/symbol hints on every key
+
+    // Hold shift (or 123) to light up every key's second character
+    private static final long REVEAL_DELAY_MS = 260;
+    private float revealP;             // 0 = normal, 1 = all symbols lit
+    private boolean revealHeld;
+    private Touch revealTouch, revealCandidate;
+    private int savedShift;
+    private android.animation.ValueAnimator revealAnim;
+    private final Runnable revealStart = () -> {
+        Touch t = revealCandidate;
+        if (t == null || mode != MODE_ALPHA) return;
+        boolean stillDown = false;
+        for (int i = 0; i < touches.size(); i++) if (touches.valueAt(i) == t) stillDown = true;
+        if (!stillDown) return;
+        revealHeld = true;
+        revealTouch = t;
+        if (t.key.type == SHIFT) shift = savedShift; // holding isn't a shift tap
+        haptic(HapticFeedbackConstants.CLOCK_TICK);
+        animateReveal(1f);
+    };
 
     // Personal touch model: where this person actually taps each letter, relative to the key centre,
     // in key units. Learned from taps that weren't immediately deleted.
@@ -134,7 +155,8 @@ public class KeyboardView extends View {
     private long trailEnd;
 
     // Theme
-    private int colBg, colKey, colSpecial, colPressed, colShadow, colText, colAlt, colAccent, colAccentPressed;
+    private int colBg, colKey, colSpecial, colPressed, colShadow, colText, colAlt, colAccent, colAccentPressed, colLit;
+    private final Paint outline = new Paint(Paint.ANTI_ALIAS_FLAG);
 
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint text = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -219,6 +241,41 @@ public class KeyboardView extends View {
     public void setGlideEnabled(boolean on) { glideEnabled = on; }
 
     /** @param height 0 small, 1 normal, 2 large. @param flick 0 short, 1 normal, 2 long. */
+    /** Bigger, brighter number and symbol hints on the letter keys. */
+    public void setClearHints(boolean on) {
+        if (on != clearHints) {
+            clearHints = on;
+            invalidate();
+        }
+    }
+
+    private void animateReveal(float target) {
+        if (revealAnim != null) revealAnim.cancel();
+        if (!android.animation.ValueAnimator.areAnimatorsEnabled()) {
+            revealP = target;
+            invalidate();
+            return;
+        }
+        revealAnim = android.animation.ValueAnimator.ofFloat(revealP, target);
+        revealAnim.setDuration(target > revealP ? 150 : 120);
+        revealAnim.setInterpolator(new android.view.animation.DecelerateInterpolator());
+        revealAnim.addUpdateListener(a -> {
+            revealP = (float) a.getAnimatedValue();
+            invalidate();
+        });
+        revealAnim.start();
+    }
+
+    private void endReveal() {
+        handler.removeCallbacks(revealStart);
+        revealCandidate = null;
+        if (revealHeld) {
+            revealHeld = false;
+            revealTouch = null;
+            animateReveal(0f);
+        }
+    }
+
     public void setFeel(int height, int flick, boolean vibrate) {
         float r = height == 0 ? 52 : height == 2 ? 64 : 58;
         flickDp = flick == 0 ? 18 : flick == 2 ? 36 : 26;
@@ -595,6 +652,8 @@ public class KeyboardView extends View {
         handler.removeCallbacks(spaceLongPress);
         spaceTouch = null;
         touches.clear();
+        endReveal();
+        revealP = 0;
     }
 
     private void onKeyDown(Touch t) {
@@ -607,6 +666,8 @@ public class KeyboardView extends View {
                 break;
             case SHIFT: {
                 long now = SystemClock.uptimeMillis();
+                savedShift = shift;
+                scheduleReveal(t);
                 if (shift == SHIFT_LOCK) shift = SHIFT_OFF;
                 else if (shift == SHIFT_ON) shift = (now - lastShiftTap < 350) ? SHIFT_LOCK : SHIFT_OFF;
                 else shift = SHIFT_ON;
@@ -618,9 +679,19 @@ public class KeyboardView extends View {
                 handler.removeCallbacks(spaceLongPress);
                 handler.postDelayed(spaceLongPress, 600);
                 break;
+            case TO_SYM:
+                scheduleReveal(t);
+                break;
             default:
                 break;
         }
+    }
+
+    private void scheduleReveal(Touch t) {
+        if (mode != MODE_ALPHA) return;
+        revealCandidate = t;
+        handler.removeCallbacks(revealStart);
+        handler.postDelayed(revealStart, REVEAL_DELAY_MS);
     }
 
     private void onKeyMove(Touch t, float x, float y) {
@@ -684,7 +755,15 @@ public class KeyboardView extends View {
             case DELETE:
                 handler.removeCallbacks(deleteRepeat);
                 break;
-            case TO_SYM: setMode(MODE_SYM); break;
+            case SHIFT:
+                if (t == revealCandidate || t == revealTouch) endReveal();
+                break;
+            case TO_SYM: {
+                boolean wasReveal = revealHeld && t == revealTouch;
+                if (t == revealCandidate || t == revealTouch) endReveal();
+                if (!wasReveal) setMode(MODE_SYM);
+                break;
+            }
             case TO_SYM2: setMode(MODE_SYM2); break;
             case TO_ALPHA: setMode(MODE_ALPHA); break;
             case EMOJI:
@@ -715,7 +794,7 @@ public class KeyboardView extends View {
 
     private void commitChar(Touch t) {
         Key k = t.key;
-        boolean flicked = k.alt != null && t.progress >= FLICK_COMMIT;
+        boolean flicked = k.alt != null && (t.progress >= FLICK_COMMIT || revealHeld);
         String s = flicked ? k.alt : displayMain(k);
         confirmPendingTap();
         if (!flicked && mode == MODE_ALPHA && isLetterKey(k) && !t.glide) {
@@ -739,13 +818,15 @@ public class KeyboardView extends View {
                 == Configuration.UI_MODE_NIGHT_YES;
         if (dark) {
             colBg = 0xFF1F1F21; colKey = 0xFF4B4B4F; colSpecial = 0xFF323235; colPressed = 0xFF6E6E73;
-            colShadow = 0xFF0E0E0F; colText = Color.WHITE; colAlt = 0xFF9C9CA1;
+            colShadow = 0xFF0E0E0F; colText = Color.WHITE; colAlt = 0xFF9C9CA1; colLit = 0xFF1E3A5F;
         } else {
             colBg = 0xFFD1D4DA; colKey = Color.WHITE; colSpecial = 0xFFABB1BA; colPressed = 0xFFE3E4E8;
-            colShadow = 0xFF898E96; colText = Color.BLACK; colAlt = 0xFF8A8A8E;
+            colShadow = 0xFF898E96; colText = Color.BLACK; colAlt = 0xFF8A8A8E; colLit = 0xFFDCEAFF;
         }
         colAccent = 0xFF0A84FF;
         colAccentPressed = 0xFF3A9BFF;
+        outline.setStyle(Paint.Style.STROKE);
+        outline.setStrokeWidth(dp(1.5f));
     }
 
     @Override
@@ -806,6 +887,9 @@ public class KeyboardView extends View {
         if (k.type == SHIFT && shift != SHIFT_OFF) bg = colKey;
         boolean accent = k.type == ENTER && enterAccent;
         if (accent) bg = pressed ? colAccentPressed : colAccent;
+        boolean lit = revealP > 0 && k.type == CHAR && k.alt != null;
+        if (lit && !pressed) bg = blend(bg, colLit, revealP);
+        if ((k.type == SHIFT || k.type == TO_SYM) && revealHeld && t == revealTouch) bg = blend(bg, colAccent, revealP);
 
         float r = dp(6);
         tmp.set(k.rect);
@@ -814,6 +898,12 @@ public class KeyboardView extends View {
         c.drawRoundRect(tmp, r, r, fill);
         fill.setColor(bg);
         c.drawRoundRect(k.rect, r, r, fill);
+
+        if (lit) {
+            outline.setColor(colAccent);
+            outline.setAlpha((int) (160 * revealP));
+            c.drawRoundRect(k.rect.left + dp(0.75f), k.rect.top + dp(0.75f), k.rect.right - dp(0.75f), k.rect.bottom - dp(0.75f), r, r, outline);
+        }
 
         float cx = k.rect.centerX(), cy = k.rect.centerY();
         int fg = accent ? Color.WHITE : colText;
@@ -857,16 +947,22 @@ public class KeyboardView extends View {
             drawLabel(c, main, cx, cy, mainSize, colText, 255);
             return;
         }
-        float p = t == null ? 0f : t.progress;
+        float p = Math.max(t == null ? 0f : t.progress, revealP);
         // Resting: small alt character on top, letter just below centre.
-        // Pulling down: letter slides out the bottom, alt grows into the centre.
+        // Pulling down (or holding shift): letter slides out the bottom, alt grows into the centre.
         float mainY = cy + h * 0.10f + p * h * 0.5f;
         float altY = lerp(k.rect.top + h * 0.22f, cy, p);
-        float altSize = lerp(sp(12), sp(24), p);
+        float restSize = clearHints ? sp(14.5f) : sp(12);
+        float altSize = lerp(restSize, sp(25), p);
+        int restColor = clearHints ? blend(colAlt, colText, 0.6f) : colAlt;
         c.save();
         c.clipRect(k.rect);
         drawLabel(c, main, cx, mainY, mainSize, colText, (int) (255 * (1f - p)));
-        drawLabel(c, k.alt, cx, altY, altSize, blend(colAlt, colText, p), 255);
+        drawLabel(c, k.alt, cx, altY, altSize, blend(restColor, colText, p), 255);
+        if (revealP > 0) {
+            // Keep the letter visible, small in the corner, so you know which key is which
+            drawLabel(c, main, k.rect.right - dp(7), k.rect.bottom - dp(7), sp(9), colAlt, (int) (200 * revealP));
+        }
         c.restore();
     }
 

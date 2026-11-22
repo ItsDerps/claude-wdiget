@@ -44,6 +44,7 @@ public class SwipeKeyboardService extends InputMethodService
     static final String PREF_HEIGHT = "key_height";
     static final String PREF_FLICK = "flick_distance";
     static final String PREF_VIBRATE = "vibrate";
+    static final String PREF_CLEAR_HINTS = "clear_hints";
     static final String PREF_FIXES_KEPT = "fixes_kept";
     static final String PREF_FIXES_UNDONE = "fixes_undone";
 
@@ -211,6 +212,7 @@ public class SwipeKeyboardService extends InputMethodService
             view.setGlideEnabled(predict && prefs.getBoolean(PREF_GLIDE, true));
             view.setOneHand(prefs.getInt(PREF_ONE_HAND, KeyboardView.HAND_OFF));
             view.setFeel(prefs.getInt(PREF_HEIGHT, 1), prefs.getInt(PREF_FLICK, 1), prefs.getBoolean(PREF_VIBRATE, true));
+            view.setClearHints(prefs.getBoolean(PREF_CLEAR_HINTS, false));
         }
         applyMemory();
         if (bar != null) bar.setMemory(memory);
