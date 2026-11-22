@@ -57,9 +57,9 @@ final class StackPanel {
         spring.damping = 0.8f;
     }
 
-    static StackPanel show(FrameLayout root, AppIconView src, String name, List<Apps.App> apps, boolean labels, Host host) {
+    static StackPanel show(FrameLayout root, View src, RectF d, String slot, String name, List<Apps.App> apps, boolean labels, Host host) {
         Context c = root.getContext();
-        StackPanel p = new StackPanel(root, src.slot, host);
+        StackPanel p = new StackPanel(root, slot, host);
 
         TextView title = new TextView(c);
         title.setText(name);
@@ -110,7 +110,6 @@ final class StackPanel {
         int[] rp = new int[2], sp = new int[2];
         root.getLocationOnScreen(rp);
         src.getLocationOnScreen(sp);
-        RectF d = src.discBounds();
         float iconCx = sp[0] - rp[0] + d.centerX(), iconCy = sp[1] - rp[1] + d.centerY();
         p.fromScale = d.width() / w;
         p.fromDx = iconCx - root.getWidth() / 2f;

@@ -36,6 +36,8 @@ final class AppMenu {
         /** The stack currently open, if the held app is inside one. */
         String openStackSlot();
         void removeFromStack(Apps.App a);
+        boolean isBig(Apps.App a);
+        void toggleBig(Apps.App a);
     }
 
     private final FrameLayout overlay;
@@ -119,6 +121,10 @@ final class AppMenu {
             row.addView(m.action(c, Glyph.STACK, "Unstack", Ui.WHITE, () -> actions.removeFromStack(app)));
         } else {
             row.addView(m.action(c, onHome ? Glyph.HOME_REMOVE : Glyph.HOME_ADD, onHome ? "Unpin" : "Pin", Ui.WHITE, () -> actions.toggleHome(app)));
+            if (onHome) {
+                boolean big = actions.isBig(app);
+                row.addView(m.action(c, Glyph.BIG, big ? "Small" : "Large", Ui.WHITE, () -> actions.toggleBig(app)));
+            }
             if (inDock || !actions.dockFull()) {
                 row.addView(m.action(c, Glyph.DOCK, inDock ? "Undock" : "Dock", Ui.WHITE, () -> actions.toggleDock(app)));
             }

@@ -16,6 +16,7 @@ import android.graphics.Outline;
 import android.graphics.Paint;
 import android.graphics.RectF;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
@@ -50,6 +51,7 @@ final class Widgets {
     static final String[][] BUILT_IN = {
             {"battery", "Battery", "A ring of dots, red while charging"},
             {"clock", "Dot clock", "Sixty dots, hands made of dots"},
+            {"tiles", "Quick tiles", "Torch, Wi‑Fi, Bluetooth and ring mode"},
             {"torch", "Torch", "One tap on, one tap off"},
             {"next", "Next up", "Your next event, one tap to open"},
             {"music", "Now playing", "What's playing, with play and pause"},
@@ -99,7 +101,9 @@ final class Widgets {
         }
     }
 
-    static boolean isHalf(String w) { return w.equals("b:battery") || w.equals("b:clock") || w.equals("b:torch"); }
+    static boolean isHalf(String w) {
+        return w.equals("b:battery") || w.equals("b:clock") || w.equals("b:torch") || w.equals("b:tiles");
+    }
 
     // ------------------------------------------------------------------ building
 
@@ -113,18 +117,18 @@ final class Widgets {
         for (String w : l) {
             View v = make(w);
             if (v == null) continue;
-            View framed = frame(w, v, edit, remover);
+            View framed = frame(w, v, edit, remover, isHalf(w));
             if (isHalf(w)) {
                 if (pairRow == null) {
                     pairRow = new LinearLayout(ctx);
                     LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(-1, -2);
                     rlp.bottomMargin = Ui.dpi(ctx, 10);
                     box.addView(pairRow, rlp);
-                    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, Ui.dpi(ctx, 124), 1f);
+                    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
                     lp.rightMargin = Ui.dpi(ctx, 5);
                     pairRow.addView(framed, lp);
                 } else {
-                    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, Ui.dpi(ctx, 124), 1f);
+                    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
                     lp.leftMargin = Ui.dpi(ctx, 5);
                     pairRow.addView(framed, lp);
                     pairRow = null;
@@ -168,6 +172,7 @@ final class Widgets {
             case "b:battery": return new BatteryW(ctx);
             case "b:clock": return new ClockW(ctx);
             case "b:torch": return new TorchW(ctx);
+            case "b:tiles": return new TilesW(ctx);
             case "b:next": return new NextW(ctx);
             case "b:music": return new MusicW(ctx);
             case "b:weather": return new WeatherW(ctx);
@@ -186,8 +191,16 @@ final class Widgets {
         }
     }
 
-    private View frame(String w, View content, boolean edit, Remover remover) {
-        FrameLayout f = new FrameLayout(ctx);
+    /** Nothing's widgets are squares: a frame whose height follows its width. */
+    static final class Square extends FrameLayout {
+        Square(Context c) { super(c); }
+        @Override protected void onMeasure(int w, int h) {
+            super.onMeasure(w, MeasureSpec.makeMeasureSpec(MeasureSpec.getSize(w), MeasureSpec.EXACTLY));
+        }
+    }
+
+    private View frame(String w, View content, boolean edit, Remover remover, boolean square) {
+        FrameLayout f = square ? new Square(ctx) : new FrameLayout(ctx);
         f.setClipChildren(false);
         FrameLayout clip = new FrameLayout(ctx);
         boolean builtIn = w.startsWith("b:");
@@ -324,7 +337,7 @@ final class Widgets {
 
     /** The torch: white when on. */
     static final class TorchW extends View {
-        private static boolean on;
+        static boolean on;
         private final Paint p = paint();
         static boolean isOn() { return on; }
         TorchW(Context c) {
@@ -362,6 +375,109 @@ final class Widgets {
             c.drawPath(path, p);
             c.drawLine(cx, cy + 4 * u, cx, cy + 8 * u, p);
         }
+    }
+
+    /** Four round quick tiles: torch, Wi‑Fi, Bluetooth and ring/vibrate. */
+    static final class TilesW extends LinearLayout {
+        TilesW(Context c) {
+            super(c);
+            setOrientation(VERTICAL);
+            setGravity(Gravity.CENTER);
+            setPadding(Ui.dpi(c, 10), Ui.dpi(c, 10), Ui.dpi(c, 10), Ui.dpi(c, 10));
+            LinearLayout r1 = new LinearLayout(c), r2 = new LinearLayout(c);
+            r1.setGravity(Gravity.CENTER);
+            r2.setGravity(Gravity.CENTER);
+            android.media.AudioManager am = c.getSystemService(android.media.AudioManager.class);
+            r1.addView(tile(c, Glyph.TORCH, TorchW.isOn(), (v, setOn) -> {
+                if (toggleTorch(c)) setOn.accept(TorchW.isOn());
+            }));
+            r1.addView(tile(c, Glyph.WIFI, false, (v, setOn) ->
+                    start(c, new Intent(android.os.Build.VERSION.SDK_INT >= 29 ? android.provider.Settings.Panel.ACTION_WIFI
+                            : android.provider.Settings.ACTION_WIFI_SETTINGS))));
+            r2.addView(tile(c, Glyph.BLUETOOTH, false, (v, setOn) ->
+                    start(c, new Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS))));
+            boolean ring = am != null && am.getRingerMode() == android.media.AudioManager.RINGER_MODE_NORMAL;
+            r2.addView(tile(c, ring ? Glyph.BELL : Glyph.VIBRATE, ring, (v, setOn) -> {
+                if (am == null) return;
+                try {
+                    boolean nowRing = am.getRingerMode() != android.media.AudioManager.RINGER_MODE_NORMAL;
+                    am.setRingerMode(nowRing ? android.media.AudioManager.RINGER_MODE_NORMAL : android.media.AudioManager.RINGER_MODE_VIBRATE);
+                    ((android.widget.ImageView) v).setImageDrawable(new Glyph(nowRing ? Glyph.BELL : Glyph.VIBRATE, Ui.dpi(c, 22), nowRing ? Ui.BLACK : Ui.WHITE));
+                    setOn.accept(nowRing);
+                } catch (Exception e) {
+                    start(c, new Intent(android.provider.Settings.ACTION_SOUND_SETTINGS));
+                }
+            }));
+            addView(r1, new LayoutParams(-1, 0, 1f));
+            addView(r2, new LayoutParams(-1, 0, 1f));
+        }
+
+        interface Tap { void run(View v, java.util.function.Consumer<Boolean> setOn); }
+
+        private View tile(Context c, int glyph, boolean on, Tap tap) {
+            android.widget.ImageView iv = new android.widget.ImageView(c);
+            iv.setScaleType(android.widget.ImageView.ScaleType.CENTER);
+            GradientDrawable bg = new GradientDrawable();
+            bg.setShape(GradientDrawable.OVAL);
+            java.util.function.Consumer<Boolean> setOn = o -> {
+                bg.setColor(o ? Ui.WHITE : 0xFF222222);
+                Drawable d = iv.getDrawable();
+                if (d instanceof Glyph) iv.setImageDrawable(new Glyph(((Glyph) d).kind(), Ui.dpi(c, 22), o ? Ui.BLACK : Ui.WHITE));
+            };
+            iv.setImageDrawable(new Glyph(glyph, Ui.dpi(c, 22), on ? Ui.BLACK : Ui.WHITE));
+            bg.setColor(on ? Ui.WHITE : 0xFF222222);
+            iv.setBackground(bg);
+            iv.setOnClickListener(v -> {
+                Ui.tap(v);
+                v.animate().scaleX(0.88f).scaleY(0.88f).setDuration(70).withEndAction(() ->
+                        v.animate().scaleX(1f).scaleY(1f).setInterpolator(new android.view.animation.OvershootInterpolator(3f)).setDuration(260).start()).start();
+                tap.run(v, setOn);
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -1, 1f);
+            int m = Ui.dpi(c, 5);
+            lp.setMargins(m, m, m, m);
+            iv.setLayoutParams(lp);
+            // Keep the tiles round whatever the space
+            iv.setOutlineProvider(null);
+            return new SquareTile(c, iv);
+        }
+    }
+
+    /** Centres a round tile at the largest square that fits. */
+    static final class SquareTile extends FrameLayout {
+        private final View inner;
+        SquareTile(Context c, View inner) {
+            super(c);
+            this.inner = inner;
+            addView(inner);
+            setLayoutParams(new LinearLayout.LayoutParams(0, -1, 1f));
+        }
+        @Override protected void onLayout(boolean changed, int l, int t, int r, int b) {
+            int w = r - l, h = b - t, s = (int) (Math.min(w, h) - Ui.dp(getContext(), 8));
+            int x = (w - s) / 2, y = (h - s) / 2;
+            inner.layout(x, y, x + s, y + s);
+        }
+        @Override protected void onMeasure(int w, int h) {
+            super.onMeasure(w, h);
+            int s = Math.min(getMeasuredWidth(), getMeasuredHeight());
+            inner.measure(MeasureSpec.makeMeasureSpec(s, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(s, MeasureSpec.EXACTLY));
+        }
+    }
+
+    /** Toggle the torch; returns false if this phone has none. */
+    static boolean toggleTorch(Context c) {
+        try {
+            CameraManager cm = c.getSystemService(CameraManager.class);
+            for (String id : cm.getCameraIdList()) {
+                Boolean flash = cm.getCameraCharacteristics(id).get(CameraCharacteristics.FLASH_INFO_AVAILABLE);
+                if (flash != null && flash) {
+                    TorchW.on = !TorchW.on;
+                    cm.setTorchMode(id, TorchW.on);
+                    return true;
+                }
+            }
+        } catch (Exception ignored) { }
+        return false;
     }
 
     /** The next event, with a one-tap open. */

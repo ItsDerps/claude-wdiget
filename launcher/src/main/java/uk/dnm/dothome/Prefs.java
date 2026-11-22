@@ -53,6 +53,9 @@ final class Prefs {
     List<String> dock() { return list("dock"); }
     void setDock(List<String> l) { putList("dock", l); }
     Set<String> hidden() { return new HashSet<>(list("hidden")); }
+    /** Home items shown large (2 × 2): large icons and large folders. */
+    Set<String> big() { return new HashSet<>(list("big")); }
+    void setBig(Set<String> s) { putList("big", new ArrayList<>(s)); }
     void setHidden(Set<String> s) { putList("hidden", new ArrayList<>(s)); }
 
     /** Launch history for suggestions: key -> {"n": count, "t": last time, "h": [24 hour counts]} */

@@ -82,4 +82,6 @@ final class Ui {
     static float clamp(float v, float lo, float hi) { return Math.max(lo, Math.min(hi, v)); }
 
     static float lerp(float a, float b, float t) { return a + (b - a) * t; }
+
+    static int clampInt(int v, int lo, int hi) { return Math.max(lo, Math.min(hi, v)); }
 }

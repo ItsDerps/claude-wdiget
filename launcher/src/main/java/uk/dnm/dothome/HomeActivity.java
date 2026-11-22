@@ -54,11 +54,17 @@ import java.util.Map;
 import java.util.Set;
 
 public class HomeActivity extends Activity
-        implements HomeView.Host, DrawerView.Host, AppMenu.Actions, StackPanel.Host, Apps.Listener {
+        implements HomeView.Host, DrawerView.Host, AppMenu.Actions, StackPanel.Host, Apps.Listener,
+        BigStackView.Listener, ArcDialView.Host {
 
     private static final int REQ_BIND = 11, REQ_CONFIG = 12;
 
     private Root root;
+    private DotGridView grid;
+    private ArcDialView dial;
+    private EdgeHandle edge;
+    private AppIconView lastLaunched;
+    private boolean returning;
     private HomeView home;
     private DrawerView drawer;
     private TodayView today;
@@ -117,11 +123,20 @@ public class HomeActivity extends Activity
         fb.setCornerRadius(Ui.dp(this, 40));
         editFrame.setBackground(fb);
         editFrame.setVisibility(View.INVISIBLE);
+        grid = new DotGridView(this);
+        root.addView(grid, new FrameLayout.LayoutParams(-1, -1));
         root.addView(editFrame, new FrameLayout.LayoutParams(-1, -1));
+        home.setBigListener(this);
         root.addView(home, new FrameLayout.LayoutParams(-1, -1));
         root.addView(today, new FrameLayout.LayoutParams(-1, -1));
         root.addView(drawer, new FrameLayout.LayoutParams(-1, -1));
         buildEditChrome();
+        dial = new ArcDialView(this);
+        dial.setHost(this);
+        edge = new EdgeHandle(this, dial, () -> apps.visible());
+        FrameLayout.LayoutParams elp = new FrameLayout.LayoutParams(Ui.dpi(this, 24), Ui.dpi(this, 200), Gravity.END | Gravity.CENTER_VERTICAL);
+        root.addView(edge, elp);
+        root.addView(dial, new FrameLayout.LayoutParams(-1, -1));
         drawer.setVisibility(View.INVISIBLE);
         today.setVisibility(View.INVISIBLE);
         drawer.setDescendantFocusability(android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS);
@@ -215,16 +230,42 @@ public class HomeActivity extends Activity
         refreshEvent();
         updateWeatherChip();
         Weather.refresh(this, false, () -> { updateWeatherChip(); rebuildWidgets(); });
+        if (returning && lastLaunched != null && !assembleOnResume) {
+            AppIconView v = lastLaunched;
+            root.post(() -> landOn(v));
+        }
+        returning = false;
         if (assembleOnResume) {
             assembleOnResume = false;
             home.clock.postDelayed(home.clock::assemble, 60);
+            home.postDelayed(home::cascade, 40);
         }
+    }
+
+    /** Back from an app: home settles in, the icon lands with a bounce, and the dots light up under it. */
+    private void landOn(AppIconView v) {
+        if (Ui.motion(this) != Ui.MOTION_FULL || edit) return;
+        if (progress == 0 && todayP == 0) {
+            home.setScaleX(1.04f);
+            home.setScaleY(1.04f);
+            home.animate().scaleX(1f).scaleY(1f).setDuration(420)
+                    .setInterpolator(new android.view.animation.OvershootInterpolator(1.2f)).start();
+        }
+        if (!v.isAttachedToWindow() || !v.isShown()) return;
+        v.pop();
+        int[] p = new int[2], r = new int[2];
+        v.getLocationOnScreen(p);
+        root.getLocationOnScreen(r);
+        RectF d = v.discBounds();
+        grid.burst(p[0] - r[0] + d.centerX(), p[1] - r[1] + d.centerY());
     }
 
     @Override
     protected void onStop() {
         super.onStop();
         widgets.stop();
+        returning = lastLaunched != null;
+        if (dial.isActive()) dial.end(false);
         // Coming back home should always show home, not whatever you left open
         closeOverlays();
         if (edit) setEdit(false, false);
@@ -264,7 +305,7 @@ public class HomeActivity extends Activity
             String a = i.getAction();
             if (Intent.ACTION_USER_PRESENT.equals(a)) {
                 assembleOnResume = true;
-                if (hasWindowFocus()) { assembleOnResume = false; home.clock.assemble(); }
+                if (hasWindowFocus()) { assembleOnResume = false; home.clock.assemble(); home.cascade(); }
             } else if (Intent.ACTION_BATTERY_CHANGED.equals(a)) {
                 int level = i.getIntExtra(BatteryManager.EXTRA_LEVEL, -1), scale = i.getIntExtra(BatteryManager.EXTRA_SCALE, 100);
                 int status = i.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
@@ -297,6 +338,7 @@ public class HomeActivity extends Activity
         List<HomeView.Slot> out = new ArrayList<>();
         Map<String, Stacks.Stack> stacks = Stacks.load(this);
         Set<String> hidden = prefs.hidden();
+        Set<String> big = prefs.big();
         for (String key : prefs.pinned()) {
             if (Stacks.isStack(key)) {
                 Stacks.Stack s = stacks.get(key.substring(Stacks.PREFIX.length()));
@@ -304,10 +346,16 @@ public class HomeActivity extends Activity
                 List<Apps.App> l = new ArrayList<>();
                 for (Apps.App a : apps.resolve(s.apps)) if (!hidden.contains(a.key)) l.add(a);
                 if (l.isEmpty()) continue;
-                out.add(new HomeView.Slot(key, s.name, l));
+                HomeView.Slot slot = new HomeView.Slot(key, s.name, l);
+                slot.big = big.contains(key);
+                out.add(slot);
             } else {
                 Apps.App a = apps.find(key);
-                if (a != null && !hidden.contains(key)) out.add(new HomeView.Slot(key, a));
+                if (a != null && !hidden.contains(key)) {
+                    HomeView.Slot slot = new HomeView.Slot(key, a);
+                    slot.big = big.contains(key);
+                    out.add(slot);
+                }
             }
         }
         return out;
@@ -357,10 +405,13 @@ public class HomeActivity extends Activity
         if (wall) {
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER);
             root.setBackgroundColor(0x59000000);
+            grid.setVisibility(View.GONE);
         } else {
             getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER);
-            root.setBackground(dotGrid(this));
+            root.setBackgroundColor(Ui.BLACK);
+            grid.setVisibility(View.VISIBLE);
         }
+        grid.setGlowEnabled(!wall && Ui.motion(this) == Ui.MOTION_FULL);
     }
 
     // ------------------------------------------------------------------ drawer motion
@@ -426,8 +477,13 @@ public class HomeActivity extends Activity
 
     // ------------------------------------------------------------------ Today page
 
+    private void updateEdge() {
+        if (edge != null) edge.setVisibility(editP < 0.01f && todayP < 0.01f ? View.VISIBLE : View.INVISIBLE);
+    }
+
     private void applyToday(float p) {
         todayP = p;
+        updateEdge();
         int w = root.getWidth();
         today.setTranslationX((Ui.clamp(p, 0, 1) - 1) * w);
         today.setVisibility(p > 0.001f ? View.VISIBLE : View.INVISIBLE);
@@ -551,25 +607,27 @@ public class HomeActivity extends Activity
         editTray.setTranslationY((1 - chrome) * Ui.dp(this, 20));
         editTop.setVisibility(e > 0.01f ? View.VISIBLE : View.INVISIBLE);
         editTray.setVisibility(e > 0.01f ? View.VISIBLE : View.INVISIBLE);
+        updateEdge();
     }
 
     // ---- drag & drop in edit mode
 
     private static final int Z_NONE = -1, Z_HOME = HomeView.ZONE_HOME, Z_DOCK = HomeView.ZONE_DOCK, Z_REMOVE = 9;
-    private AppIconView dragSrc, dragFloat;
+    private View dragSrc;
+    private AppIconView dragFloat;
     private int dragZone = Z_NONE, dragIndex = -1;
     private int hoverZone = Z_NONE, hoverIndex = -1;
     private boolean hoverMerge;
-    private AppIconView hoverCell;
+    private View hoverCell;
 
-    private AppIconView cellAt(float x, float y, int[] zoneOut, int[] indexOut) {
+    private View cellAt(float x, float y, int[] zoneOut, int[] indexOut) {
         int[] rp = new int[2];
         root.getLocationOnScreen(rp);
         float s = home.getScaleX();
         for (int z = 0; z < 2; z++) {
-            List<AppIconView> cells = z == 0 ? home.homeCells : home.dockCells;
+            List<? extends View> cells = z == 0 ? home.homeCells : home.dockCells;
             for (int i = 0; i < cells.size(); i++) {
-                AppIconView v = cells.get(i);
+                View v = cells.get(i);
                 int[] p = new int[2];
                 v.getLocationOnScreen(p);
                 float l = p[0] - rp[0], t = p[1] - rp[1];
@@ -584,32 +642,39 @@ public class HomeActivity extends Activity
     }
 
     /** How close the finger is to the disc centre of a cell (0 = centre, 1 = edge of disc). */
-    private float discDistance(AppIconView v, float x, float y) {
+    private float discDistance(View v, float x, float y) {
         int[] rp = new int[2], p = new int[2];
         root.getLocationOnScreen(rp);
         v.getLocationOnScreen(p);
         float s = home.getScaleX();
-        RectF d = v.discBounds();
+        RectF d = ((Cell) v).discBounds();
         float cx = p[0] - rp[0] + d.centerX() * s, cy = p[1] - rp[1] + d.centerY() * s;
-        float r = d.width() / 2 * s;
+        float r = Math.min(d.width(), d.height()) / 2 * s;
         return (float) Math.hypot(x - cx, y - cy) / r;
     }
 
     private boolean beginAppDrag(float x, float y) {
         int[] z = new int[1], i = new int[1];
-        AppIconView src = cellAt(x, y, z, i);
-        if (src == null || !src.hasContent()) return false;
+        View src = cellAt(x, y, z, i);
+        if (src == null || !((Cell) src).hasContent()) return false;
+        List<String> keys = z[0] == Z_HOME ? homeKeys : dockKeys;
+        if (i[0] >= keys.size()) return false;
+        String key = keys.get(i[0]);
         dragSrc = src;
         dragZone = z[0];
         dragIndex = i[0];
         dragFloat = new AppIconView(this, 48, false);
-        if (src.isStack()) dragFloat.bindStack(src.slot, src.stackName, src.stackApps, null);
-        else dragFloat.bind(src.app, null);
+        if (Stacks.isStack(key)) {
+            Stacks.Stack st = Stacks.get(this, key);
+            dragFloat.bindStack(key, st == null ? "" : st.name, st == null ? new ArrayList<>() : apps.resolve(st.apps), null);
+        } else {
+            dragFloat.bind(apps.find(key), null);
+        }
         dragFloat.setLifted(true);
         dragFloat.setClickable(false);
         root.addView(dragFloat, new FrameLayout.LayoutParams(Ui.dpi(this, 66), Ui.dpi(this, 66)));
         moveFloat(x, y);
-        src.setGhost(true);
+        ((Cell) src).setGhost(true);
         editTitle.setText("Drag here to remove from home");
         editTitle.setTextColor(0xFFAAAAAA);
         editDone.setVisibility(View.INVISIBLE);
@@ -628,7 +693,7 @@ public class HomeActivity extends Activity
         float fy = y - Ui.dp(this, 24);
         int zone = Z_NONE, index = -1;
         boolean merge = false;
-        AppIconView cell = null;
+        View cell = null;
         int[] tl = new int[2];
         editTop.getLocationOnScreen(tl);
         int[] rp = new int[2];
@@ -642,16 +707,16 @@ public class HomeActivity extends Activity
                 zone = z[0];
                 index = i[0];
                 // Dropping right on top of another app (home only) makes or grows a stack
-                merge = zone == Z_HOME && cell.hasContent() && discDistance(cell, x, fy) < 0.62f;
+                merge = zone == Z_HOME && ((Cell) cell).hasContent() && discDistance(cell, x, fy) < 0.62f;
             }
         }
         if (zone != hoverZone || index != hoverIndex || merge != hoverMerge) {
-            if (hoverCell != null) hoverCell.setDropTarget(false, false);
+            if (hoverCell != null) ((Cell) hoverCell).setDropTarget(false, false);
             hoverZone = zone;
             hoverIndex = index;
             hoverMerge = merge;
             hoverCell = cell;
-            if (cell != null) cell.setDropTarget(true, merge);
+            if (cell != null) ((Cell) cell).setDropTarget(true, merge);
             boolean remove = zone == Z_REMOVE;
             editTitle.setText(remove ? "Let go to remove from home" : merge ? "Let go to make a stack" : "Drag here to remove from home");
             editTitle.setTextColor(remove ? Ui.RED : 0xFFAAAAAA);
@@ -661,8 +726,8 @@ public class HomeActivity extends Activity
 
     private void dragEnd(boolean drop) {
         if (dragFloat != null) root.removeView(dragFloat);
-        if (hoverCell != null) hoverCell.setDropTarget(false, false);
-        if (dragSrc != null) dragSrc.setGhost(false);
+        if (hoverCell != null) ((Cell) hoverCell).setDropTarget(false, false);
+        if (dragSrc != null) ((Cell) dragSrc).setGhost(false);
         editTitle.setText("Edit home");
         editTitle.setTextColor(0xFFAAAAAA);
         editDone.setVisibility(View.VISIBLE);
@@ -861,11 +926,13 @@ public class HomeActivity extends Activity
         sheet.show();
     }
 
-    private void showStackSheet(AppIconView v) {
-        String slot = v.slot;
-        sheet = new Sheet(root, v.stackName == null ? "STACK" : v.stackName.toUpperCase(), insetBottom);
-        sheet.row(new Glyph(Glyph.STACK, Ui.dpi(this, 22), Ui.WHITE), "Open", null, () -> openStack(v));
-        sheet.row(null, "Rename", null, () -> renameDialog(slot, v.stackName));
+    private void showStackSheet(View anchor, RectF disc, String slot, String name, List<Apps.App> stackApps) {
+        sheet = new Sheet(root, name == null ? "STACK" : name.toUpperCase(), insetBottom);
+        sheet.row(new Glyph(Glyph.STACK, Ui.dpi(this, 22), Ui.WHITE), "Open", null, () -> openStack(anchor, disc, slot, name, stackApps));
+        sheet.row(null, "Rename", null, () -> renameDialog(slot, name));
+        boolean isBig = prefs.big().contains(slot);
+        sheet.row(new Glyph(Glyph.BIG, Ui.dpi(this, 22), Ui.WHITE), isBig ? "Make small" : "Make large",
+                isBig ? "Back to a normal icon" : "A 2 × 2 folder: open its four apps directly", () -> toggleBigSlot(slot));
         sheet.row(null, "Break apart", "Put each app back on home", () -> breakStack(slot));
         sheet.row(null, "Remove from home", "The apps stay in the drawer", () -> {
             List<String> h = new ArrayList<>(prefs.pinned());
@@ -911,9 +978,55 @@ public class HomeActivity extends Activity
 
     // ------------------------------------------------------------------ stacks
 
-    private void openStack(AppIconView v) {
-        if (v.stackApps == null) return;
-        stackPanel = StackPanel.show(root, v, v.stackName, v.stackApps, prefs.labels(), this);
+    private void openStack(View anchor, RectF disc, String slot, String name, List<Apps.App> stackApps) {
+        if (stackApps == null) return;
+        stackPanel = StackPanel.show(root, anchor, disc, slot, name, stackApps, prefs.labels(), this);
+    }
+
+    @Override
+    public void onBigStackOpen(BigStackView v) {
+        if (edit) return;
+        openStack(v, v.discBounds(), v.slot, v.name, v.apps);
+    }
+
+    @Override
+    public void onBigStackHold(BigStackView v) {
+        if (edit) return;
+        showStackSheet(v, v.discBounds(), v.slot, v.name, v.apps);
+    }
+
+    private void toggleBigSlot(String slot) {
+        Set<String> b = prefs.big();
+        if (!b.remove(slot)) b.add(slot);
+        prefs.setBig(b);
+        rebuild();
+    }
+
+    @Override public boolean isBig(Apps.App a) { return prefs.big().contains(a.key); }
+    @Override public void toggleBig(Apps.App a) { toggleBigSlot(a.key); }
+
+    // ------------------------------------------------------------------ app dial
+
+    @Override
+    public void onDialPick(Apps.App app, RectF from) {
+        Rect bounds = new Rect((int) from.left, (int) from.top, (int) from.right, (int) from.bottom);
+        Bundle opts = Ui.motion(this) != Ui.MOTION_OFF
+                ? ActivityOptions.makeScaleUpAnimation(dial, bounds.left, bounds.top, bounds.width(), bounds.height()).toBundle() : null;
+        int[] p = new int[2];
+        dial.getLocationOnScreen(p);
+        bounds.offset(p[0], p[1]);
+        try {
+            apps.launcherApps().startMainActivity(app.component, app.user, bounds, opts);
+            apps.recordLaunch(app);
+            lastLaunched = null;
+        } catch (Exception e) {
+            Toast.makeText(this, "Couldn't open " + app.label, Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    @Override
+    public void onDialOpenChanged(boolean open) {
+        if (open) drawer.hideKeyboard();
     }
 
     @Override
@@ -929,13 +1042,13 @@ public class HomeActivity extends Activity
 
     @Override
     public void onAppClick(AppIconView v) {
-        if (v.isStack()) { openStack(v); return; }
+        if (v.isStack()) { openStack(v, v.discBounds(), v.slot, v.stackName, v.stackApps); return; }
         launchApp(v.app, v);
     }
 
     @Override
     public void onAppLongClick(AppIconView v) {
-        if (v.isStack()) { showStackSheet(v); return; }
+        if (v.isStack()) { showStackSheet(v, v.discBounds(), v.slot, v.stackName, v.stackApps); return; }
         if (v.app == null) return;
         drawer.hideKeyboard();
         menu = AppMenu.show(root, v, this);
@@ -962,6 +1075,7 @@ public class HomeActivity extends Activity
         }
         try {
             apps.launcherApps().startMainActivity(a.component, a.user, bounds, opts);
+            lastLaunched = from instanceof AppIconView ? (AppIconView) from : null;
             apps.recordLaunch(a);
         } catch (Exception e) {
             Toast.makeText(this, "Couldn't open " + a.label, Toast.LENGTH_SHORT).show();
@@ -1165,20 +1279,6 @@ public class HomeActivity extends Activity
         Toast.makeText(this, "To lock with a double-tap, turn it on in Dot Home settings", Toast.LENGTH_SHORT).show();
     }
 
-    /** Pure black with a barely-there dot grid, like the design. Black pixels stay off on OLED. */
-    private static Drawable dotGrid(Context c) {
-        int step = Ui.dpi(c, 13);
-        android.graphics.Bitmap b = android.graphics.Bitmap.createBitmap(step, step, android.graphics.Bitmap.Config.ARGB_8888);
-        android.graphics.Canvas cv = new android.graphics.Canvas(b);
-        cv.drawColor(Ui.BLACK);
-        android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
-        p.setColor(0xFF121212);
-        cv.drawCircle(step / 2f, step / 2f, Ui.dp(c, 1.1f), p);
-        android.graphics.drawable.BitmapDrawable d = new android.graphics.drawable.BitmapDrawable(c.getResources(), b);
-        d.setTileModeXY(Shader.TileMode.REPEAT, Shader.TileMode.REPEAT);
-        return d;
-    }
-
     private boolean overlayOpen() {
         return (menu != null && menu.isShowing()) || (stackPanel != null && stackPanel.isOpen()) || (sheet != null && sheet.isShowing());
     }
@@ -1201,7 +1301,7 @@ public class HomeActivity extends Activity
 
         Root(Context c) {
             super(c);
-            setBackground(dotGrid(c));
+            setBackgroundColor(Ui.BLACK);
             slop = ViewConfiguration.get(c).getScaledTouchSlop();
             taps = new GestureDetector(c, new GestureDetector.SimpleOnGestureListener() {
                 @Override public boolean onDown(MotionEvent e) { return true; }
@@ -1225,7 +1325,8 @@ public class HomeActivity extends Activity
 
         @Override
         public boolean dispatchTouchEvent(MotionEvent e) {
-            if (!edit && progress == 0 && todayP == 0 && !overlayOpen()) pinch.onTouchEvent(e);
+            grid.touch(e);
+            if (!edit && progress == 0 && todayP == 0 && !overlayOpen() && !dial.isActive()) pinch.onTouchEvent(e);
             return super.dispatchTouchEvent(e);
         }
 
@@ -1398,8 +1499,8 @@ public class HomeActivity extends Activity
                     else if (e.getActionMasked() == MotionEvent.ACTION_UP && Math.hypot(e.getX() - downX, e.getY() - downY) < slop) {
                         // A tap on empty space ends editing; a tap on an app does nothing
                         int[] z = new int[1], i = new int[1];
-                        AppIconView cell = cellAt(e.getX(), e.getY(), z, i);
-                        if (cell == null || !cell.hasContent()) setEdit(false, true);
+                        View cell = cellAt(e.getX(), e.getY(), z, i);
+                        if (cell == null || !((Cell) cell).hasContent()) setEdit(false, true);
                     }
                     editDown = false;
                     editDragging = false;

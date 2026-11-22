@@ -18,7 +18,7 @@ import java.util.List;
  * Touch: squashes to 0.9, dots ripple out from the finger, a ring of dots fills while held,
  * and on release it springs back slightly past full size.
  */
-public class AppIconView extends View {
+public class AppIconView extends View implements Cell {
 
     interface Listener {
         void onAppClick(AppIconView v);
@@ -111,10 +111,33 @@ public class AppIconView extends View {
     }
 
     boolean isStack() { return stackApps != null; }
-    boolean hasContent() { return app != null || stackApps != null; }
+    @Override public boolean hasContent() { return app != null || stackApps != null; }
+
+    /** Coming back from this app: the icon lands with a bounce and a ripple. */
+    void pop() {
+        if (Ui.motion(getContext()) != Ui.MOTION_FULL) return;
+        scale.set(1.22f);
+        scale.stiffness = 420;
+        scale.damping = 0.45f;
+        scale.animateTo(1f, 0);
+        RectF d = discBounds();
+        rippleStart = SystemClock.uptimeMillis();
+        rippleX = d.centerX();
+        rippleY = d.centerY();
+        invalidate();
+    }
+
+    /** Large (2 × 2) icons centre themselves in their space; normal ones sit at the top. */
+    private float top() {
+        float content = disc + (showLabel ? Ui.dp(getContext(), 18) : 0);
+        float t = Ui.dp(getContext(), 6);
+        if (getHeight() > content + Ui.dp(getContext(), 30)) t = (getHeight() - content) / 2f;
+        return t;
+    }
 
     /** Edit mode: highlight as the cell a dragged app will land in (red ring; filled when it'll make a stack). */
-    void setDropTarget(boolean on, boolean makesStack) {
+    @Override
+    public void setDropTarget(boolean on, boolean makesStack) {
         if (on != dropTarget || makesStack != dropStack) {
             dropTarget = on;
             dropStack = makesStack;
@@ -123,7 +146,8 @@ public class AppIconView extends View {
     }
 
     /** Edit mode: the source cell while its app is being dragged. */
-    void setGhost(boolean on) {
+    @Override
+    public void setGhost(boolean on) {
         if (on != ghost) { ghost = on; invalidate(); }
     }
 
@@ -143,8 +167,9 @@ public class AppIconView extends View {
     }
 
     /** Where the disc is, in this view's coordinates (for the app-opening animation). */
-    RectF discBounds() {
-        float cx = getWidth() / 2f, top = Ui.dp(getContext(), 6);
+    @Override
+    public RectF discBounds() {
+        float cx = getWidth() / 2f, top = top();
         return new RectF(cx - disc / 2, top, cx + disc / 2, top + disc);
     }
 
@@ -157,7 +182,7 @@ public class AppIconView extends View {
 
     @Override
     protected void onDraw(Canvas c) {
-        float cx = getWidth() / 2f, top = Ui.dp(getContext(), 6), cy = top + disc / 2;
+        float cx = getWidth() / 2f, top = top(), cy = top + disc / 2;
         long now = SystemClock.uptimeMillis();
         boolean anim = false;
 

@@ -113,6 +113,7 @@ public class DrawerView extends FrameLayout {
         scrubber = new ScrubberView(c);
         scrubber.setListener(this::jumpTo);
         body.addView(scrubber, new FrameLayout.LayoutParams(Ui.dpi(c, 140), LayoutParams.MATCH_PARENT, Gravity.END));
+        scrubber.setVisibility(GONE); // the app dial on the right edge replaces the A–Z strip
 
         search.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int a, int b, int d) { }
@@ -301,7 +302,6 @@ public class DrawerView extends FrameLayout {
         if (q.trim().isEmpty()) {
             results.setVisibility(GONE);
             list.setVisibility(VISIBLE);
-            scrubber.setVisibility(VISIBLE);
             last = null;
             return;
         }

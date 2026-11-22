@@ -13,7 +13,8 @@ final class Glyph extends Drawable {
 
     static final int SEARCH = 0, CLEAR = 1, CHEVRON = 2, INFO = 3, HOME_ADD = 4, HOME_REMOVE = 5,
             DOCK = 6, HIDE = 7, REMOVE = 8, TIMER = 9, ALARM = 10, SETTINGS = 11, WEB = 12, CALL = 13, COPY = 14,
-            PLAY = 15, PAUSE = 16, PREV = 17, NEXT = 18, PLUS = 19, WIDGETS = 20, WALLPAPER = 21, STACK = 22;
+            PLAY = 15, PAUSE = 16, PREV = 17, NEXT = 18, PLUS = 19, WIDGETS = 20, WALLPAPER = 21, STACK = 22,
+            TORCH = 23, WIFI = 24, BLUETOOTH = 25, BELL = 26, VIBRATE = 27, BIG = 28;
 
     private final int kind;
     private final int size;
@@ -30,6 +31,8 @@ final class Glyph extends Drawable {
         p.setStrokeWidth(sizePx / 24f * 1.7f);
         setBounds(0, 0, sizePx, sizePx);
     }
+
+    int kind() { return kind; }
 
     @Override public int getIntrinsicWidth() { return size; }
     @Override public int getIntrinsicHeight() { return size; }
@@ -177,6 +180,38 @@ final class Glyph extends Drawable {
                 c.drawCircle(14.5f, 9.5f, 1.4f, p);
                 c.drawCircle(9.5f, 14.5f, 1.4f, p);
                 c.drawCircle(14.5f, 14.5f, 1.4f, p);
+                break;
+            case TORCH:
+                path.moveTo(8, 3); path.lineTo(16, 3); path.lineTo(16, 7); path.lineTo(14, 10); path.lineTo(14, 21);
+                path.lineTo(10, 21); path.lineTo(10, 10); path.lineTo(8, 7); path.close();
+                c.drawPath(path, p);
+                c.drawLine(12, 13, 12, 15, p);
+                break;
+            case WIFI:
+                c.drawArc(3, 6, 21, 24, 225, 90, false, p);
+                c.drawArc(6.5f, 9.5f, 17.5f, 20.5f, 225, 90, false, p);
+                c.drawCircle(12, 17.5f, 1.2f, p);
+                break;
+            case BLUETOOTH:
+                path.moveTo(7, 7.5f); path.lineTo(17, 16.5f); path.lineTo(12, 21); path.lineTo(12, 3);
+                path.lineTo(17, 7.5f); path.lineTo(7, 16.5f);
+                c.drawPath(path, p);
+                break;
+            case BELL:
+                path.moveTo(6, 16); path.lineTo(6, 11); path.cubicTo(6, 7.5f, 8.7f, 5, 12, 5); path.cubicTo(15.3f, 5, 18, 7.5f, 18, 11);
+                path.lineTo(18, 16); path.lineTo(19.5f, 18); path.lineTo(4.5f, 18); path.close();
+                c.drawPath(path, p);
+                c.drawLine(10, 21, 14, 21, p);
+                break;
+            case VIBRATE:
+                c.drawRoundRect(8, 4, 16, 20, 2, 2, p);
+                c.drawLine(4.5f, 9, 4.5f, 15, p);
+                c.drawLine(19.5f, 9, 19.5f, 15, p);
+                break;
+            case BIG:
+                c.drawRoundRect(4, 4, 20, 20, 4, 4, p);
+                c.drawLine(9, 12, 15, 12, p);
+                c.drawLine(12, 9, 12, 15, p);
                 break;
             default:
                 break;
