@@ -55,14 +55,12 @@ import java.util.Set;
 
 public class HomeActivity extends Activity
         implements HomeView.Host, DrawerView.Host, AppMenu.Actions, StackPanel.Host, Apps.Listener,
-        BigStackView.Listener, QuickPanel.Host {
+        BigStackView.Listener {
 
     private static final int REQ_BIND = 11, REQ_CONFIG = 12;
 
     private Root root;
     private DotGridView grid;
-    private QuickPanel dial;
-    private EdgeHandle edge;
     private AppIconView lastLaunched;
     private boolean returning;
     private HomeView home;
@@ -132,12 +130,6 @@ public class HomeActivity extends Activity
         root.addView(today, new FrameLayout.LayoutParams(-1, -1));
         root.addView(drawer, new FrameLayout.LayoutParams(-1, -1));
         buildEditChrome();
-        dial = new QuickPanel(this);
-        dial.setHost(this);
-        edge = new EdgeHandle(this, dial, () -> apps.visible());
-        FrameLayout.LayoutParams elp = new FrameLayout.LayoutParams(Ui.dpi(this, 24), Ui.dpi(this, 200), Gravity.END | Gravity.CENTER_VERTICAL);
-        root.addView(edge, elp);
-        root.addView(dial, new FrameLayout.LayoutParams(-1, -1));
         drawer.setVisibility(View.INVISIBLE);
         today.setVisibility(View.INVISIBLE);
         drawer.setDescendantFocusability(android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS);
@@ -266,7 +258,6 @@ public class HomeActivity extends Activity
         super.onStop();
         widgets.stop();
         returning = lastLaunched != null;
-        if (dial.isOpen()) dial.close();
         // Coming back home should always show home, not whatever you left open
         closeOverlays();
         if (edit) setEdit(false, false);
@@ -294,7 +285,6 @@ public class HomeActivity extends Activity
     /** Close a menu, stack or sheet if one is open. Returns true if something closed. */
     private boolean closeOverlays() {
         boolean any = false;
-        if (dial.isOpen()) { dial.close(); any = true; }
         if (menu != null && menu.isShowing()) { menu.dismiss(); any = true; }
         if (stackPanel != null && stackPanel.isOpen()) { stackPanel.close(); any = true; }
         if (sheet != null && sheet.isShowing()) { sheet.dismiss(); any = true; }
@@ -558,13 +548,8 @@ public class HomeActivity extends Activity
 
     // ------------------------------------------------------------------ Today page
 
-    private void updateEdge() {
-        if (edge != null) edge.setVisibility(editP < 0.01f && todayP < 0.01f ? View.VISIBLE : View.INVISIBLE);
-    }
-
     private void applyToday(float p) {
         todayP = p;
-        updateEdge();
         int w = root.getWidth();
         today.setTranslationX((Ui.clamp(p, 0, 1) - 1) * w);
         today.setVisibility(p > 0.001f ? View.VISIBLE : View.INVISIBLE);
@@ -710,7 +695,6 @@ public class HomeActivity extends Activity
         editTray.setTranslationY((1 - chrome) * Ui.dp(this, 20));
         editTop.setVisibility(e > 0.01f ? View.VISIBLE : View.INVISIBLE);
         editTray.setVisibility(e > 0.01f ? View.VISIBLE : View.INVISIBLE);
-        updateEdge();
     }
 
     // ---- drag & drop in edit mode
@@ -935,10 +919,42 @@ public class HomeActivity extends Activity
 
     // ------------------------------------------------------------------ sheets
 
+    /** Widgets from Nothing's own apps (Weather, Clock, Recorder, Nothing X, ...). */
+    private static boolean isNothing(AppWidgetProviderInfo info) {
+        String pkg = info.provider.getPackageName();
+        return pkg.startsWith("com.nothing") || pkg.startsWith("com.nt.");
+    }
+
     private void showWidgetPicker() {
         sheet = new Sheet(root, "WIDGETS", insetBottom);
         List<String> have = new ArrayList<>();
         for (String k : prefs.pinned()) if (k.startsWith("w:")) have.add(k.substring(2));
+
+        AppWidgetManager wm = AppWidgetManager.getInstance(this);
+        List<AppWidgetProviderInfo> providers = new ArrayList<>();
+        for (android.os.UserHandle u : getSystemService(android.os.UserManager.class).getUserProfiles()) {
+            try { providers.addAll(wm.getInstalledProvidersForProfile(u)); } catch (Exception ignored) { }
+        }
+        PackageManager pm = getPackageManager();
+        providers.sort((a, b) -> {
+            int c = appLabel(pm, a).compareToIgnoreCase(appLabel(pm, b));
+            return c != 0 ? c : a.loadLabel(pm).compareToIgnoreCase(b.loadLabel(pm));
+        });
+        int density = getResources().getDisplayMetrics().densityDpi;
+
+        // Nothing's own widgets first
+        sheet.section("NOTHING");
+        boolean anyNothing = false;
+        for (AppWidgetProviderInfo info : providers) {
+            if (!isNothing(info)) continue;
+            anyNothing = true;
+            widgetRow(info, pm, density, true);
+        }
+        if (!anyNothing) {
+            sheet.row(null, "No Nothing widgets found",
+                    "Widgets built into the Nothing launcher only work there. Widgets from Nothing apps show up here.", null);
+        }
+
         sheet.section("DOT HOME");
         boolean any = false;
         for (String[] b : Widgets.BUILT_IN) {
@@ -951,19 +967,33 @@ public class HomeActivity extends Activity
             });
         }
         if (!any) sheet.row(null, "All of Dot Home's widgets are on home", null, null);
-        sheet.section("FROM YOUR APPS");
-        AppWidgetManager wm = AppWidgetManager.getInstance(this);
-        List<AppWidgetProviderInfo> providers = new ArrayList<>(wm.getInstalledProvidersForProfile(android.os.Process.myUserHandle()));
-        PackageManager pm = getPackageManager();
-        providers.sort((a, b) -> appLabel(pm, a).compareToIgnoreCase(appLabel(pm, b)));
-        int density = getResources().getDisplayMetrics().densityDpi;
+
+        sheet.section("OTHER APPS");
         for (AppWidgetProviderInfo info : providers) {
-            Drawable preview = null;
-            try { preview = info.loadPreviewImage(this, density); } catch (Exception ignored) { }
-            if (preview == null) try { preview = info.loadIcon(this, density); } catch (Exception ignored) { }
-            sheet.row(preview, info.loadLabel(pm), appLabel(pm, info), () -> addAndroidWidget(info));
+            if (!isNothing(info)) widgetRow(info, pm, density, false);
         }
         sheet.show();
+    }
+
+    private void widgetRow(AppWidgetProviderInfo info, PackageManager pm, int density, boolean bigPreview) {
+        Drawable preview = null;
+        try { preview = info.loadPreviewImage(this, density); } catch (Exception ignored) { }
+        if (preview == null) try { preview = info.loadIcon(this, density); } catch (Exception ignored) { }
+        int[] size = defaultCells(info);
+        String sub = appLabel(pm, info) + " · " + size[0] + " × " + size[1];
+        View row = sheet.row(preview, info.loadLabel(pm), sub, () -> addAndroidWidget(info));
+        if (bigPreview && preview != null && row instanceof LinearLayout && ((LinearLayout) row).getChildAt(0) instanceof ImageView) {
+            // Nothing's widgets get a larger preview, so you can see what you're adding
+            ImageView iv = (ImageView) ((LinearLayout) row).getChildAt(0);
+            iv.setLayoutParams(new LinearLayout.LayoutParams(Ui.dpi(this, 96), Ui.dpi(this, 96)));
+        }
+    }
+
+    private int[] defaultCells(AppWidgetProviderInfo info) {
+        float d = getResources().getDisplayMetrics().density;
+        int cw = (int) Math.ceil(info.minWidth / (80 * d)), ch = (int) Math.ceil(info.minHeight / (80 * d));
+        cw = cw <= 1 ? 1 : cw <= 2 ? 2 : 4;
+        return new int[]{cw, Math.max(1, Math.min(4, ch))};
     }
 
     private static String appLabel(PackageManager pm, AppWidgetProviderInfo info) {
@@ -1127,29 +1157,6 @@ public class HomeActivity extends Activity
     @Override public boolean isBig(Apps.App a) { return prefs.big().contains(a.key); }
     @Override public void toggleBig(Apps.App a) { toggleBigSlot(a.key); }
 
-    // ------------------------------------------------------------------ app dial
-
-    @Override
-    public void onDialPick(Apps.App app, RectF from) {
-        Rect bounds = new Rect((int) from.left, (int) from.top, (int) from.right, (int) from.bottom);
-        Bundle opts = Ui.motion(this) != Ui.MOTION_OFF
-                ? ActivityOptions.makeScaleUpAnimation(dial, bounds.left, bounds.top, bounds.width(), bounds.height()).toBundle() : null;
-        int[] p = new int[2];
-        dial.getLocationOnScreen(p);
-        bounds.offset(p[0], p[1]);
-        try {
-            apps.launcherApps().startMainActivity(app.component, app.user, bounds, opts);
-            apps.recordLaunch(app);
-            lastLaunched = null;
-        } catch (Exception e) {
-            Toast.makeText(this, "Couldn't open " + app.label, Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    @Override
-    public void onDialOpenChanged(boolean open) {
-        if (open) drawer.hideKeyboard();
-    }
 
     @Override
     public void renameStack(String slot, String name) {
@@ -1402,7 +1409,7 @@ public class HomeActivity extends Activity
     }
 
     private boolean overlayOpen() {
-        return dial.isOpen() || (menu != null && menu.isShowing()) || (stackPanel != null && stackPanel.isOpen()) || (sheet != null && sheet.isShowing());
+        return (menu != null && menu.isShowing()) || (stackPanel != null && stackPanel.isOpen()) || (sheet != null && sheet.isShowing());
     }
 
     /**
