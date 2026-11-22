@@ -12,7 +12,8 @@ import android.graphics.drawable.Drawable;
 final class Glyph extends Drawable {
 
     static final int SEARCH = 0, CLEAR = 1, CHEVRON = 2, INFO = 3, HOME_ADD = 4, HOME_REMOVE = 5,
-            DOCK = 6, HIDE = 7, REMOVE = 8, TIMER = 9, ALARM = 10, SETTINGS = 11, WEB = 12, CALL = 13, COPY = 14;
+            DOCK = 6, HIDE = 7, REMOVE = 8, TIMER = 9, ALARM = 10, SETTINGS = 11, WEB = 12, CALL = 13, COPY = 14,
+            PLAY = 15, PAUSE = 16, PREV = 17, NEXT = 18, PLUS = 19, WIDGETS = 20, WALLPAPER = 21, STACK = 22;
 
     private final int kind;
     private final int size;
@@ -129,6 +130,53 @@ final class Glyph extends Drawable {
                 path.lineTo(5.5f, 4); path.quadTo(4, 4, 4, 5.5f); path.lineTo(4, 14.5f);
                 path.quadTo(4, 16, 5.5f, 16); path.lineTo(8, 16);
                 c.drawPath(path, p);
+                break;
+            case PLAY:
+                p.setStyle(Paint.Style.FILL_AND_STROKE);
+                path.moveTo(8, 5.5f); path.lineTo(18, 12); path.lineTo(8, 18.5f); path.close();
+                c.drawPath(path, p);
+                p.setStyle(Paint.Style.STROKE);
+                break;
+            case PAUSE:
+                p.setStrokeWidth(3);
+                c.drawLine(8.5f, 6, 8.5f, 18, p);
+                c.drawLine(15.5f, 6, 15.5f, 18, p);
+                break;
+            case PREV:
+                p.setStyle(Paint.Style.FILL_AND_STROKE);
+                path.moveTo(18, 6); path.lineTo(9, 12); path.lineTo(18, 18); path.close();
+                c.drawPath(path, p);
+                p.setStyle(Paint.Style.STROKE);
+                c.drawLine(6, 6, 6, 18, p);
+                break;
+            case NEXT:
+                p.setStyle(Paint.Style.FILL_AND_STROKE);
+                path.moveTo(6, 6); path.lineTo(15, 12); path.lineTo(6, 18); path.close();
+                c.drawPath(path, p);
+                p.setStyle(Paint.Style.STROKE);
+                c.drawLine(18, 6, 18, 18, p);
+                break;
+            case PLUS:
+                c.drawLine(12, 5, 12, 19, p);
+                c.drawLine(5, 12, 19, 12, p);
+                break;
+            case WIDGETS:
+                c.drawRoundRect(4, 4, 11, 11, 2, 2, p);
+                c.drawRoundRect(13, 4, 20, 11, 2, 2, p);
+                c.drawRoundRect(4, 13, 11, 20, 2, 2, p);
+                c.drawRoundRect(13, 13, 20, 20, 2, 2, p);
+                break;
+            case WALLPAPER:
+                c.drawRoundRect(4, 3.5f, 20, 20.5f, 3, 3, p);
+                path.moveTo(4, 15); path.lineTo(8.5f, 11); path.lineTo(12.5f, 14.5f); path.lineTo(15, 12.5f); path.lineTo(20, 16.5f);
+                c.drawPath(path, p);
+                break;
+            case STACK:
+                c.drawCircle(12, 12, 8.5f, p);
+                c.drawCircle(9.5f, 9.5f, 1.4f, p);
+                c.drawCircle(14.5f, 9.5f, 1.4f, p);
+                c.drawCircle(9.5f, 14.5f, 1.4f, p);
+                c.drawCircle(14.5f, 14.5f, 1.4f, p);
                 break;
             default:
                 break;

@@ -33,6 +33,9 @@ final class AppMenu {
         void hide(Apps.App a);
         void uninstall(Apps.App a);
         void setBackdrop(boolean blurred);
+        /** The stack currently open, if the held app is inside one. */
+        String openStackSlot();
+        void removeFromStack(Apps.App a);
     }
 
     private final FrameLayout overlay;
@@ -110,10 +113,15 @@ final class AppMenu {
         rule.setBackgroundColor(0xFF262626);
         box.addView(rule, new LinearLayout.LayoutParams(-1, Ui.dpi(c, 1)));
         boolean onHome = actions.onHome(app), inDock = actions.inDock(app);
+        boolean inStack = actions.openStackSlot() != null;
         row.addView(m.action(c, Glyph.INFO, "Info", Ui.WHITE, () -> actions.info(app, src)));
-        row.addView(m.action(c, onHome ? Glyph.HOME_REMOVE : Glyph.HOME_ADD, onHome ? "Unpin" : "Pin", Ui.WHITE, () -> actions.toggleHome(app)));
-        if (inDock || !actions.dockFull()) {
-            row.addView(m.action(c, Glyph.DOCK, inDock ? "Undock" : "Dock", Ui.WHITE, () -> actions.toggleDock(app)));
+        if (inStack) {
+            row.addView(m.action(c, Glyph.STACK, "Unstack", Ui.WHITE, () -> actions.removeFromStack(app)));
+        } else {
+            row.addView(m.action(c, onHome ? Glyph.HOME_REMOVE : Glyph.HOME_ADD, onHome ? "Unpin" : "Pin", Ui.WHITE, () -> actions.toggleHome(app)));
+            if (inDock || !actions.dockFull()) {
+                row.addView(m.action(c, Glyph.DOCK, inDock ? "Undock" : "Dock", Ui.WHITE, () -> actions.toggleDock(app)));
+            }
         }
         row.addView(m.action(c, Glyph.HIDE, "Hide", Ui.WHITE, () -> actions.hide(app)));
         row.addView(m.action(c, Glyph.REMOVE, "Remove", Ui.RED, () -> actions.uninstall(app)));

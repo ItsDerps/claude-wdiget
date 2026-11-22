@@ -6,6 +6,9 @@
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
     <uses-permission android:name="android.permission.READ_CALENDAR" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Only used for weather, which is off until you turn it on -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <!-- Which apps a launcher may see: everything with a launcher icon, plus default-app lookups -->
     <queries>

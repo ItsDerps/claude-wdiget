@@ -23,12 +23,29 @@ public class HomeView extends LinearLayout {
         void onDateTap();
         void onBatteryTap();
         void onEventTap();
+        void onWeatherTap();
     }
+
+    /** One home slot: an app or a stack. */
+    static final class Slot {
+        final String key;              // app key or "stack:<id>"
+        final Apps.App app;
+        final String stackName;
+        final List<Apps.App> stackApps;
+        Slot(String key, Apps.App app) { this.key = key; this.app = app; stackName = null; stackApps = null; }
+        Slot(String key, String name, List<Apps.App> apps) { this.key = key; app = null; stackName = name; stackApps = apps; }
+    }
+
+    static final int ZONE_HOME = 0, ZONE_DOCK = 1;
+    static final int HOME_SLOTS = 12, DOCK_SLOTS = 4;
 
     final DotClockView clock;
     private final TextView date;
     private final LinearLayout glance;
-    private final TextView battery, event;
+    private final TextView battery, event, weather;
+    final LinearLayout widgetBox;
+    /** Every cell on home and in the dock, in order (edit mode includes the empty ones). */
+    final List<AppIconView> homeCells = new java.util.ArrayList<>(), dockCells = new java.util.ArrayList<>();
     private final LinearLayout pinnedBox, dock;
     private final View hint;
     private final View top;
@@ -61,10 +78,20 @@ public class HomeView extends LinearLayout {
         event = chip(c);
         event.setOnClickListener(v -> host.onEventTap());
         event.setVisibility(GONE);
+        weather = chip(c);
+        weather.setVisibility(GONE);
+        weather.setOnClickListener(v -> host.onWeatherTap());
+        glance.addView(weather);
         glance.addView(event);
         glance.addView(battery);
         topBox.addView(glance);
         addView(topBox);
+
+        widgetBox = new LinearLayout(c);
+        widgetBox.setOrientation(VERTICAL);
+        widgetBox.setPadding(Ui.dpi(c, 14), Ui.dpi(c, 16), Ui.dpi(c, 14), 0);
+        widgetBox.setClipChildren(false);
+        addView(widgetBox, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
 
         addView(new View(c), new LayoutParams(1, 0, 1f));
 
@@ -141,6 +168,16 @@ public class HomeView extends LinearLayout {
         battery.setCompoundDrawables(dot(charging ? Ui.RED : level <= 15 ? Ui.RED : 0xFF777777), null, null, null);
     }
 
+    void setWeather(String text) {
+        if (text == null) {
+            weather.setVisibility(GONE);
+        } else {
+            weather.setText(text);
+            weather.setCompoundDrawables(null, null, null, null);
+            weather.setVisibility(VISIBLE);
+        }
+    }
+
     void setEvent(String text) {
         if (text == null) {
             event.setVisibility(GONE);
@@ -151,26 +188,70 @@ public class HomeView extends LinearLayout {
         }
     }
 
-    void bind(List<Apps.App> pinned, List<Apps.App> dockApps, boolean labels, Set<String> badges, AppIconView.Listener l) {
+    void bind(List<Slot> pinned, List<Apps.App> dockApps, boolean labels, Set<String> badges,
+              AppIconView.Listener l, boolean edit) {
         Context c = getContext();
         pinnedBox.removeAllViews();
-        LinearLayout row = null;
-        for (int i = 0; i < Math.min(12, pinned.size()); i++) {
-            if (i % 4 == 0) {
-                row = new LinearLayout(c);
-                row.setClipChildren(false);
-                LayoutParams rlp = new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT);
-                rlp.topMargin = i == 0 ? 0 : Ui.dpi(c, 6);
-                pinnedBox.addView(row, rlp);
+        homeCells.clear();
+        dockCells.clear();
+        int cells = edit ? HOME_SLOTS : Math.min(HOME_SLOTS, pinned.size());
+        int rows = (cells + 3) / 4;
+        for (int r = 0; r < rows; r++) {
+            LinearLayout row = new LinearLayout(c);
+            row.setClipChildren(false);
+            LayoutParams rlp = new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT);
+            rlp.topMargin = r == 0 ? 0 : Ui.dpi(c, 6);
+            pinnedBox.addView(row, rlp);
+            for (int col = 0; col < 4; col++) {
+                int i = r * 4 + col;
+                View v;
+                if (i < pinned.size() && i < HOME_SLOTS) {
+                    AppIconView a = slotIcon(pinned.get(i), labels, badges, l);
+                    homeCells.add(a);
+                    v = a;
+                } else if (edit) {
+                    AppIconView ph = new AppIconView(c, 48, labels);
+                    ph.makePlaceholder();
+                    homeCells.add(ph);
+                    v = ph;
+                } else {
+                    v = new View(c);
+                }
+                row.addView(v, new LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f));
             }
-            row.addView(icon(pinned.get(i), labels, badges, l), new LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f));
         }
-        if (row != null) for (int i = row.getChildCount(); i < 4; i++) row.addView(new View(c), new LayoutParams(0, 1, 1f));
 
         dock.removeAllViews();
-        for (Apps.App a : dockApps) dock.addView(icon(a, false, badges, l), new LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f));
-        for (int i = dockApps.size(); i < 4; i++) dock.addView(new View(c), new LayoutParams(0, 1, 1f));
-        dock.setVisibility(dockApps.isEmpty() ? GONE : VISIBLE);
+        int dockCount = edit ? DOCK_SLOTS : dockApps.size();
+        for (int i = 0; i < Math.max(dockCount, edit ? DOCK_SLOTS : 0); i++) {
+            AppIconView v;
+            if (i < dockApps.size()) {
+                v = icon(dockApps.get(i), false, badges, l);
+                v.slot = dockApps.get(i).key;
+            } else {
+                v = new AppIconView(c, 48, false);
+                v.makePlaceholder();
+            }
+            dockCells.add(v);
+            dock.addView(v, new LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f));
+        }
+        for (int i = dock.getChildCount(); i < 4; i++) dock.addView(new View(c), new LayoutParams(0, 1, 1f));
+        dock.setVisibility(dockApps.isEmpty() && !edit ? GONE : VISIBLE);
+        hint.setVisibility(edit ? INVISIBLE : VISIBLE);
+    }
+
+    private AppIconView slotIcon(Slot s, boolean labels, Set<String> badges, AppIconView.Listener l) {
+        if (s.app != null) {
+            AppIconView v = icon(s.app, labels, badges, l);
+            v.slot = s.key;
+            return v;
+        }
+        AppIconView v = new AppIconView(getContext(), 48, labels);
+        v.bindStack(s.key, s.stackName, s.stackApps, l);
+        boolean any = false;
+        for (Apps.App a : s.stackApps) if (badges.contains(a.pkg())) any = true;
+        v.setBadge(any);
+        return v;
     }
 
     private AppIconView icon(Apps.App a, boolean labels, Set<String> badges, AppIconView.Listener l) {
@@ -190,7 +271,12 @@ public class HomeView extends LinearLayout {
             if (v instanceof AppIconView) {
                 AppIconView a = (AppIconView) v;
                 if (a.app != null) a.setBadge(pkgs.contains(a.app.pkg()));
-            } else if (v instanceof android.view.ViewGroup) {
+                else if (a.stackApps != null) {
+                    boolean any = false;
+                    for (Apps.App x : a.stackApps) if (pkgs.contains(x.pkg())) any = true;
+                    a.setBadge(any);
+                }
+            } else if (v instanceof android.view.ViewGroup && !(v instanceof android.appwidget.AppWidgetHostView)) {
                 walk((android.view.ViewGroup) v, pkgs);
             }
         }

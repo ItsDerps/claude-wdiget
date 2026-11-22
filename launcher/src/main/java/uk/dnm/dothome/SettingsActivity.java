@@ -76,6 +76,30 @@ public class SettingsActivity extends Activity {
         link("Next event", cal ? "Allowed: shows your next event in the coming day" : "Allow calendar access to show it", cal ? null : () ->
                 requestPermissions(new String[]{Manifest.permission.READ_CALENDAR}, 1));
 
+        group("WEATHER");
+        if (Weather.enabled(this)) {
+            String where = Weather.useLocation(this) ? "your rough location" : (Weather.placeName(this) == null ? "your city" : Weather.placeName(this));
+            link("Weather", "On · " + where + " · tap to change", this::weatherDialog);
+            toggle("Fahrenheit", "Show temperatures in °F instead of °C.", Weather.fahrenheit(this),
+                    v -> prefs.raw().edit().putBoolean("weather_f", v).apply());
+        } else {
+            link("Turn on weather", "In the glance chips, the Today page and the weather widget. Uses the internet only for this.", this::weatherDialog);
+        }
+
+        group("LAYOUT");
+        text2("Pinch home, or touch & hold empty space, to edit: drag apps around, drop one on another to make a stack, add widgets.");
+        boolean wall = prefs.raw().getInt("background", 0) == 1;
+        segment("Background", new String[]{"Black", "Wallpaper"}, wall ? 1 : 0, v -> prefs.raw().edit().putInt("background", v).apply());
+        link("Back up layout", "Save your home, stacks, widgets and settings to a file", () -> {
+            Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+                    .setType("application/json").putExtra(Intent.EXTRA_TITLE, "dothome-backup.json");
+            startActivityForResult(i, 10);
+        });
+        link("Restore layout", "Load a backup file", () -> {
+            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
+            startActivityForResult(i, 11);
+        });
+
         group("DRAWER");
         toggle("Keyboard opens with the drawer", "Start typing as soon as you swipe up.", prefs.keyboardOnOpen(), prefs::setKeyboardOnOpen);
 
@@ -125,7 +149,8 @@ public class SettingsActivity extends Activity {
             android.widget.Toast.makeText(this, "Home layout reset", android.widget.Toast.LENGTH_SHORT).show();
         });
 
-        TextView foot = text("Dot Home 0.1 · Fonts: Doto and Space Mono (SIL Open Font Licence). Nothing is sent off this phone.", 11, 0xFF666666);
+        TextView foot = text("Dot Home 1.0 · Fonts: Doto and Space Mono (SIL Open Font Licence). Everything stays on this phone; "
+                + "the only thing that uses the internet is weather, if you turn it on (forecasts from Open-Meteo).", 11, 0xFF666666);
         foot.setPadding(0, Ui.dpi(this, 28), 0, 0);
         col.addView(foot);
 
@@ -135,7 +160,125 @@ public class SettingsActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == 3 && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            Weather.setUseLocation(this);
+            Weather.refresh(this, true, this::build);
+        }
         build();
+    }
+
+    // ------------------------------------------------------------------ weather
+
+    private void weatherDialog() {
+        String[] items = Weather.enabled(this)
+                ? new String[]{"Type a city", "Use my rough location", "Turn weather off"}
+                : new String[]{"Type a city", "Use my rough location"};
+        new android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Weather")
+                .setItems(items, (d, which) -> {
+                    if (which == 0) cityDialog();
+                    else if (which == 1) {
+                        if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                            Weather.setUseLocation(this);
+                            Weather.refresh(this, true, this::build);
+                            build();
+                        } else {
+                            requestPermissions(new String[]{Manifest.permission.ACCESS_COARSE_LOCATION}, 3);
+                        }
+                    } else {
+                        Weather.turnOff(this);
+                        build();
+                    }
+                })
+                .show();
+    }
+
+    private void cityDialog() {
+        android.widget.EditText input = new android.widget.EditText(this);
+        input.setHint("e.g. London");
+        input.setSingleLine(true);
+        android.widget.FrameLayout wrap = new android.widget.FrameLayout(this);
+        wrap.setPadding(Ui.dpi(this, 20), Ui.dpi(this, 8), Ui.dpi(this, 20), 0);
+        wrap.addView(input);
+        new android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Your city")
+                .setView(wrap)
+                .setPositiveButton("Set", (d, w) -> {
+                    String city = input.getText().toString();
+                    if (city.trim().isEmpty()) return;
+                    new Thread(() -> {
+                        Weather.Place p = Weather.geocode(city);
+                        runOnUiThread(() -> {
+                            if (p == null) {
+                                android.widget.Toast.makeText(this, "Couldn't find that place (or no connection)", android.widget.Toast.LENGTH_LONG).show();
+                                return;
+                            }
+                            Weather.setCity(this, p);
+                            Weather.refresh(this, true, null);
+                            android.widget.Toast.makeText(this, "Weather for " + p.name, android.widget.Toast.LENGTH_SHORT).show();
+                            build();
+                        });
+                    }).start();
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    // ------------------------------------------------------------------ backup
+
+    private static final String[] BACKUP_KEYS = {"pinned", "dock", "stacks", "hidden", "widgets", "labels", "clock", "glance",
+            "motion", "haptics", "background", "kb_on_open", "dt_lock", "swipe_down", "memory", "today_note",
+            "weather_on", "weather_use_loc", "weather_lat", "weather_lon", "weather_place", "weather_f"};
+
+    @Override
+    protected void onActivityResult(int req, int result, Intent data) {
+        super.onActivityResult(req, result, data);
+        if (result != RESULT_OK || data == null || data.getData() == null) return;
+        try {
+            if (req == 10) {
+                org.json.JSONObject o = new org.json.JSONObject();
+                java.util.Map<String, ?> all = prefs.raw().getAll();
+                for (String k : BACKUP_KEYS) {
+                    Object v = all.get(k);
+                    if (v == null) continue;
+                    if (k.equals("widgets")) {
+                        // Other apps' widgets can't be moved between installs; keep Dot Home's own
+                        org.json.JSONArray in = new org.json.JSONArray((String) v), out = new org.json.JSONArray();
+                        for (int i = 0; i < in.length(); i++) if (in.getString(i).startsWith("b:")) out.put(in.getString(i));
+                        v = out.toString();
+                    }
+                    o.put(k, v instanceof Float ? ((Float) v).doubleValue() : v);
+                }
+                o.put("_dothome_backup", 1);
+                try (java.io.OutputStream os = getContentResolver().openOutputStream(data.getData())) {
+                    os.write(o.toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                }
+                android.widget.Toast.makeText(this, "Layout backed up", android.widget.Toast.LENGTH_SHORT).show();
+            } else if (req == 11) {
+                StringBuilder sb = new StringBuilder();
+                try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(getContentResolver().openInputStream(data.getData())))) {
+                    String line;
+                    while ((line = r.readLine()) != null) sb.append(line);
+                }
+                org.json.JSONObject o = new org.json.JSONObject(sb.toString());
+                if (!o.has("_dothome_backup")) throw new IllegalArgumentException("not a backup");
+                android.content.SharedPreferences.Editor e = prefs.raw().edit();
+                for (String k : BACKUP_KEYS) {
+                    if (!o.has(k)) continue;
+                    Object v = o.get(k);
+                    if (v instanceof Boolean) e.putBoolean(k, (Boolean) v);
+                    else if (v instanceof Integer) e.putInt(k, (Integer) v);
+                    else if (v instanceof Double || v instanceof Float) e.putFloat(k, ((Number) v).floatValue());
+                    else e.putString(k, String.valueOf(v));
+                }
+                e.apply();
+                Apps.get(this).load();
+                android.widget.Toast.makeText(this, "Layout restored", android.widget.Toast.LENGTH_SHORT).show();
+                build();
+            }
+        } catch (Exception ex) {
+            android.widget.Toast.makeText(this, "That didn't work: not a Dot Home backup?", android.widget.Toast.LENGTH_LONG).show();
+        }
     }
 
     private boolean isDefaultHome() {

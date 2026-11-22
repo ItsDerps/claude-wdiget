@@ -11,6 +11,8 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
 
+import java.util.List;
+
 /**
  * One app: a white glyph on a dark disc, with an optional label.
  * Touch: squashes to 0.9, dots ripple out from the finger, a ring of dots fills while held,
@@ -24,6 +26,15 @@ public class AppIconView extends View {
     }
 
     Apps.App app;
+    /** What this icon stands for on home: an app key or a "stack:" slot (null in the drawer). */
+    String slot;
+    /** Set when this icon is a stack. */
+    List<Apps.App> stackApps;
+    String stackName;
+    /** An empty, dashed slot (edit mode). */
+    boolean placeholder;
+    private boolean dropTarget, dropStack, ghost;
+    private final android.graphics.DashPathEffect dash;
     private Listener listener;
     private boolean showLabel;
     private final float disc;
@@ -69,6 +80,7 @@ public class AppIconView extends View {
         slop = ViewConfiguration.get(c).getScaledTouchSlop();
         longPressMs = ViewConfiguration.getLongPressTimeout();
         scale = new Spring(600, 0.55f, 1f, v -> invalidate());
+        dash = new android.graphics.DashPathEffect(new float[]{Ui.dp(c, 3), Ui.dp(c, 3)}, 0);
         setClickable(true);
         setHapticFeedbackEnabled(true);
     }
@@ -78,6 +90,41 @@ public class AppIconView extends View {
         listener = l;
         setContentDescription(a == null ? null : a.label);
         invalidate();
+    }
+
+    void bindStack(String slot, String name, List<Apps.App> apps, Listener l) {
+        this.slot = slot;
+        this.stackName = name;
+        this.stackApps = apps;
+        this.app = null;
+        listener = l;
+        setContentDescription(name + ", stack of " + apps.size());
+        invalidate();
+    }
+
+    void makePlaceholder() {
+        placeholder = true;
+        app = null;
+        stackApps = null;
+        setClickable(false);
+        invalidate();
+    }
+
+    boolean isStack() { return stackApps != null; }
+    boolean hasContent() { return app != null || stackApps != null; }
+
+    /** Edit mode: highlight as the cell a dragged app will land in (red ring; filled when it'll make a stack). */
+    void setDropTarget(boolean on, boolean makesStack) {
+        if (on != dropTarget || makesStack != dropStack) {
+            dropTarget = on;
+            dropStack = makesStack;
+            invalidate();
+        }
+    }
+
+    /** Edit mode: the source cell while its app is being dragged. */
+    void setGhost(boolean on) {
+        if (on != ghost) { ghost = on; invalidate(); }
     }
 
     void setBadge(boolean on) {
@@ -154,7 +201,21 @@ public class AppIconView extends View {
             }
         }
 
-        float s = scale.value;
+        if (placeholder || ghost) {
+            stroke.setPathEffect(dash);
+            stroke.setStrokeWidth(Ui.dp(getContext(), 1.2f));
+            stroke.setColor(dropTarget ? Ui.RED : 0xFF333333);
+            if (dropTarget) {
+                fill.setColor(0x26D71921);
+                c.drawCircle(cx, cy, disc / 2, fill);
+            }
+            c.drawCircle(cx, cy, disc / 2 - Ui.dp(getContext(), 1), stroke);
+            stroke.setPathEffect(null);
+            if (anim) postInvalidateOnAnimation();
+            return;
+        }
+
+        float s = scale.value * (dropTarget ? 1.08f : 1f);
         c.save();
         c.scale(s, s, cx, cy);
         if (lifted) {
@@ -169,6 +230,24 @@ public class AppIconView extends View {
         if (app != null && app.icon != null) {
             dst.set(cx - disc / 2, cy - disc / 2, cx + disc / 2, cy + disc / 2);
             c.drawBitmap(app.icon, null, dst, bmp);
+        }
+        if (stackApps != null) {
+            // Four of the apps in miniature, 2 × 2
+            float mini = disc * 0.42f, gap = disc * 0.04f;
+            for (int i = 0; i < Math.min(4, stackApps.size()); i++) {
+                Apps.App a = stackApps.get(i);
+                float mx = cx + (i % 2 == 0 ? -gap / 2 - mini : gap / 2);
+                float my = cy + (i < 2 ? -gap / 2 - mini : gap / 2);
+                if (a.icon != null) {
+                    dst.set(mx, my, mx + mini, my + mini);
+                    c.drawBitmap(a.icon, null, dst, bmp);
+                }
+            }
+        }
+        if (dropTarget && dropStack) {
+            stroke.setColor(Ui.RED);
+            stroke.setStrokeWidth(Ui.dp(getContext(), 2));
+            c.drawCircle(cx, cy, disc / 2 + Ui.dp(getContext(), 3), stroke);
         }
         if (app != null && app.work) {
             fill.setColor(Ui.WHITE);
@@ -185,9 +264,10 @@ public class AppIconView extends View {
         }
         c.restore();
 
-        if (showLabel && app != null) {
+        String label = app != null ? app.label : stackName;
+        if (showLabel && label != null) {
             float maxW = getWidth() - Ui.dp(getContext(), 4);
-            CharSequence l = TextUtils.ellipsize(app.label, text, maxW, TextUtils.TruncateAt.END);
+            CharSequence l = TextUtils.ellipsize(label, text, maxW, TextUtils.TruncateAt.END);
             c.drawText(l, 0, l.length(), cx, top + disc + Ui.dp(getContext(), 16), text);
         }
         if (anim) postInvalidateOnAnimation();
